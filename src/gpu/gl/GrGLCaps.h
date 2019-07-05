@@ -112,10 +112,8 @@ public:
 
     bool isConfigTexturable(GrPixelConfig config) const override {
         GrGLenum glFormat = this->configSizedInternalFormat(config);
-        if (!glFormat) {
-            return false;
-        }
-        return SkToBool(this->getFormatInfo(glFormat).fFlags & FormatInfo::kTextureable_Flag);
+        GrColorType ct = GrPixelConfigToColorType(config);
+        return this->isGLFormatTexturable(ct, glFormat);
     }
 
     int getRenderTargetSampleCount(int requestedCount,
@@ -134,18 +132,22 @@ public:
         return this->canConfigBeFBOColorAttachment(config);
     }
 
-    bool canFormatBeFBOColorAttachment(GrGLenum format) const;
+    bool canGLFormatBeFBOColorAttachment(GrGLenum glFormat) const;
 
     bool canConfigBeFBOColorAttachment(GrPixelConfig config) const {
         GrGLenum format = this->configSizedInternalFormat(config);
         if (!format) {
             return false;
         }
-        return this->canFormatBeFBOColorAttachment(format);
+        return this->canGLFormatBeFBOColorAttachment(format);
     }
 
-    bool isConfigTexSupportEnabled(GrPixelConfig config) const {
-        return SkToBool(fConfigTable[config].fFlags & ConfigInfo::kCanUseTexStorage_Flag);
+    bool configSupportsTexStorage(GrPixelConfig config) const {
+        GrGLenum format = this->configSizedInternalFormat(config);
+        if (!format) {
+            return false;
+        }
+        return this->glFormatSupportsTexStorage(format);
     }
 
     GrGLenum configSizedInternalFormat(GrPixelConfig config) const {
@@ -272,12 +274,6 @@ public:
      * RGBA.
      */
     bool bgraIsInternalFormat() const;
-
-    /// Is there support for GL_UNPACK_ROW_LENGTH
-    bool unpackRowLengthSupport() const { return fUnpackRowLengthSupport; }
-
-    /// Is there support for GL_PACK_ROW_LENGTH
-    bool packRowLengthSupport() const { return fPackRowLengthSupport; }
 
     /// Is there support for GL_PACK_REVERSE_ROW_ORDER
     bool packFlipYSupport() const { return fPackFlipYSupport; }
@@ -425,11 +421,11 @@ public:
     bool fbFetchRequiresEnablePerSample() const { return fFBFetchRequiresEnablePerSample; }
 
     GrPixelConfig validateBackendRenderTarget(const GrBackendRenderTarget&,
-                                              SkColorType) const override;
+                                              GrColorType) const override;
 
-    bool areColorTypeAndFormatCompatible(SkColorType, const GrBackendFormat&) const override;
+    bool areColorTypeAndFormatCompatible(GrColorType, const GrBackendFormat&) const override;
 
-    GrPixelConfig getConfigFromBackendFormat(const GrBackendFormat&, SkColorType) const override;
+    GrPixelConfig getConfigFromBackendFormat(const GrBackendFormat&, GrColorType) const override;
     GrPixelConfig getYUVAConfigFromBackendFormat(const GrBackendFormat&) const override;
 
     GrBackendFormat getBackendFormatFromGrColorType(GrColorType ct,
@@ -459,8 +455,17 @@ private:
     void initGLSL(const GrGLContextInfo&, const GrGLInterface*);
     bool hasPathRenderingSupport(const GrGLContextInfo&, const GrGLInterface*);
 
+    struct FormatWorkarounds {
+        bool fDisableTextureRedForMesa = false;
+        bool fDisableSRGBRenderWithMSAAForMacAMD = false;
+        bool fDisablePerFormatTextureStorageForCommandBufferES2 = false;
+        bool fDisableNonRedSingleChannelTexStorageForANGLEGL = false;
+        bool fDisableBGRATextureStorageForIntelWindowsES = false;
+        bool fDisableRGB8ForMali400 = false;
+    };
+
     void applyDriverCorrectnessWorkarounds(const GrGLContextInfo&, const GrContextOptions&,
-                                           GrShaderCaps*);
+                                           GrShaderCaps*, FormatWorkarounds*);
 
     void onApplyOptionsOverrides(const GrContextOptions& options) override;
 
@@ -472,11 +477,15 @@ private:
     void initStencilSupport(const GrGLContextInfo&);
     // This must be called after initFSAASupport().
     void initConfigTable(const GrContextOptions&, const GrGLContextInfo&, const GrGLInterface*);
-    void initFormatTable(const GrContextOptions&, const GrGLContextInfo&, const GrGLInterface*);
+    void initFormatTable(const GrContextOptions&, const GrGLContextInfo&, const GrGLInterface*,
+                         const FormatWorkarounds&);
     bool onSurfaceSupportsWritePixels(const GrSurface*) const override;
     bool onCanCopySurface(const GrSurfaceProxy* dst, const GrSurfaceProxy* src,
                           const SkIRect& srcRect, const SkIPoint& dstPoint) const override;
     size_t onTransferFromOffsetAlignment(GrColorType bufferColorType) const override;
+
+    bool isGLFormatTexturable(GrColorType, GrGLenum glFormat) const;
+    bool glFormatSupportsTexStorage(GrGLenum glFormat) const;
 
     GrGLStandard fStandard;
 
@@ -489,8 +498,6 @@ private:
     MapBufferType       fMapBufferType;
     TransferBufferType  fTransferBufferType;
 
-    bool fUnpackRowLengthSupport : 1;
-    bool fPackRowLengthSupport : 1;
     bool fPackFlipYSupport : 1;
     bool fTextureUsageSupport : 1;
     bool fAlpha8IsRenderable: 1;
@@ -598,9 +605,6 @@ private:
         enum {
             kRenderable_Flag              = 0x1,
             kRenderableWithMSAA_Flag      = 0x2,
-            /** kFBOColorAttachment means that even if the config cannot be a GrRenderTarget, we can
-                still attach it to a FBO for blitting or reading pixels. */
-            kCanUseTexStorage_Flag        = 0x4,
         };
         uint32_t fFlags;
 
@@ -611,15 +615,39 @@ private:
 
     ConfigInfo fConfigTable[kGrPixelConfigCnt];
 
+    struct ColorTypeInfo {
+        ColorTypeInfo(GrColorType colorType, uint32_t flags)
+                : fColorType(colorType)
+                , fFlags(flags) {}
+
+        GrColorType fColorType;
+        enum {
+            kUploadData_Flag = 0x1,
+        };
+        uint32_t fFlags;
+    };
+
     struct FormatInfo {
+        uint32_t colorTypeFlags(GrColorType colorType) const {
+            for (int i = 0; i < fColorTypeInfos.count(); ++i) {
+                if (fColorTypeInfos[i].fColorType == colorType) {
+                    return fColorTypeInfos[i].fFlags;
+                }
+            }
+            return 0;
+        }
+
         enum {
             kTextureable_Flag                = 0x1,
             /** kFBOColorAttachment means that even if the format cannot be a GrRenderTarget, we can
                 still attach it to a FBO for blitting or reading pixels. */
             kFBOColorAttachment_Flag         = 0x2,
             kFBOColorAttachmentWithMSAA_Flag = 0x4,
+            kCanUseTexStorage_Flag           = 0x8,
         };
         uint32_t fFlags = 0;
+
+        SkSTArray<1, ColorTypeInfo> fColorTypeInfos;
     };
 
     static const size_t kNumGLFormats = 21;

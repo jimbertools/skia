@@ -127,7 +127,9 @@ def dm_flags(api, bot):
       if 'NVIDIA_Shield' not in bot:
         gl_prefix = 'gles'
     elif 'Intel' in bot:
-      sample_count = ''
+      # We don't want to test MSAA on older Intel chipsets. These are all newer (Gen9).
+      if 'Iris655' not in bot and 'Iris640' not in bot and 'Iris540' not in bot:
+        sample_count = ''
     elif 'ChromeOS' in bot:
       gl_prefix = 'gles'
 
@@ -212,6 +214,10 @@ def dm_flags(api, bot):
       blacklist('_ test _ ProcessorCloneTest')
       blacklist('_ test _ GLPrograms')
       blacklist('_ test _ ProcessorOptimizationValidationTest')
+
+    if 'CommandBuffer' in bot and 'MacBook10.1-' in bot:
+      # skbug.com/9235
+      blacklist('_ test _ GLPrograms')
 
     # skbug.com/9033 - these devices run out of memory on this test
     # when opList splitting reduction is enabled
@@ -696,6 +702,9 @@ def dm_flags(api, bot):
   if api.vars.is_linux and 'IntelIris640' in bot:
     match.extend(['~GLPrograms']) # skia:7849
 
+  if 'IntelIris640' in bot or 'IntelHD615' in bot or 'IntelHDGraphics615' in bot:
+    match.append('~^SRGBReadWritePixels$') # skia:9225
+
   if 'Vulkan' in bot and api.vars.is_linux and 'IntelHD405' in bot:
     # skia:7322
     blacklist(['vk', 'gm', '_', 'skbug_257'])
@@ -1053,6 +1062,7 @@ TEST_BUILDERS = [
   'Test-Win2016-MSVC-GCE-CPU-AVX2-x86_64-Debug-All-MSRTC',
   'Test-iOS-Clang-iPadPro-GPU-PowerVRGT7800-arm64-Release-All',
   'Test-Android-Clang-Nexus5x-GPU-Adreno418-arm-Release-All-Android_Vulkan',
+  'Test-Mac10.13-Clang-MacBook10.1-GPU-IntelHD615-x86_64-Debug-All-CommandBuffer',
 ]
 
 

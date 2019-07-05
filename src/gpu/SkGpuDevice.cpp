@@ -116,10 +116,7 @@ sk_sp<SkGpuDevice> SkGpuDevice::Make(GrContext* context, SkBudgeted budgeted,
 }
 
 static SkImageInfo make_info(GrRenderTargetContext* context, int w, int h, bool opaque) {
-    SkColorType colorType;
-    if (!GrPixelConfigToColorType(context->colorSpaceInfo().config(), &colorType)) {
-        colorType = kUnknown_SkColorType;
-    }
+    SkColorType colorType = GrColorTypeToSkColorType(context->colorSpaceInfo().colorType());
     return SkImageInfo::Make(w, h, colorType, opaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType,
                              context->colorSpaceInfo().refColorSpace());
 }
@@ -155,19 +152,10 @@ sk_sp<GrRenderTargetContext> SkGpuDevice::MakeRenderTargetContext(
         return nullptr;
     }
 
-    GrPixelConfig config = SkImageInfo2GrPixelConfig(origInfo);
-    if (kUnknown_GrPixelConfig == config) {
-        return nullptr;
-    }
-    GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(origInfo.colorType());
-    if (!format.isValid()) {
-        return nullptr;
-    }
     // This method is used to create SkGpuDevice's for SkSurface_Gpus. In this case
     // they need to be exact.
     return context->priv().makeDeferredRenderTargetContext(
-            format, SkBackingFit::kExact, origInfo.width(), origInfo.height(), config,
+            SkBackingFit::kExact, origInfo.width(), origInfo.height(),
             SkColorTypeToGrColorType(origInfo.colorType()), origInfo.refColorSpace(), sampleCount,
             mipMapped, origin, surfaceProps, budgeted);
 }
@@ -183,9 +171,10 @@ sk_sp<SkSpecialImage> SkGpuDevice::filterTexture(SkSpecialImage* srcImg,
     matrix.postTranslate(SkIntToScalar(-left), SkIntToScalar(-top));
     const SkIRect clipBounds = this->devClipBounds().makeOffset(-left, -top);
     sk_sp<SkImageFilterCache> cache(this->getImageFilterCache());
-    SkColorType colorType;
-    if (!GrPixelConfigToColorType(fRenderTargetContext->colorSpaceInfo().config(), &colorType)) {
-        colorType = kN32_SkColorType;
+    SkColorType colorType =
+            GrColorTypeToSkColorType(fRenderTargetContext->colorSpaceInfo().colorType());
+    if (colorType == kUnknown_SkColorType) {
+        colorType = kRGBA_8888_SkColorType;
     }
     SkImageFilter::OutputProperties outputProperties(
             colorType, fRenderTargetContext->colorSpaceInfo().colorSpace());
@@ -1666,27 +1655,18 @@ SkBaseDevice* SkGpuDevice::onCreateDevice(const CreateInfo& cinfo, const SkPaint
     SkBackingFit fit = kNever_TileUsage == cinfo.fTileUsage ? SkBackingFit::kApprox
                                                             : SkBackingFit::kExact;
 
-    GrPixelConfig config = fRenderTargetContext->colorSpaceInfo().config();
-    const GrBackendFormat& origFormat = fRenderTargetContext->asSurfaceProxy()->backendFormat();
-    GrBackendFormat format = origFormat.makeTexture2D();
-    if (!format.isValid()) {
-        return nullptr;
-    }
-    if (kRGBA_1010102_GrPixelConfig == config) {
+    GrColorType colorType = fRenderTargetContext->colorSpaceInfo().colorType();
+    if (colorType == GrColorType::kRGBA_1010102) {
         // If the original device is 1010102, fall back to 8888 so that we have a usable alpha
         // channel in the layer.
-        config = kRGBA_8888_GrPixelConfig;
-        format =
-            fContext->priv().caps()->getBackendFormatFromColorType(kRGBA_8888_SkColorType);
+        colorType = GrColorType::kRGBA_8888;
     }
 
     sk_sp<GrRenderTargetContext> rtc(fContext->priv().makeDeferredRenderTargetContext(
-            format,
             fit,
             cinfo.fInfo.width(),
             cinfo.fInfo.height(),
-            config,
-            fRenderTargetContext->colorSpaceInfo().colorType(),
+            colorType,
             fRenderTargetContext->colorSpaceInfo().refColorSpace(),
             fRenderTargetContext->numSamples(),
             GrMipMapped::kNo,

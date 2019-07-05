@@ -192,10 +192,6 @@ public:
     virtual int getRenderTargetSampleCount(int requestedCount,
                                            SkColorType, const GrBackendFormat&) const = 0;
     virtual int getRenderTargetSampleCount(int requestedCount, GrPixelConfig) const = 0;
-    // TODO: Remove. Legacy name used by Chrome.
-    int getSampleCount(int requestedCount, GrPixelConfig config) const {
-        return this->getRenderTargetSampleCount(requestedCount, config);
-    }
 
     /**
      * Backends may have restrictions on what types of surfaces support GrGpu::writePixels().
@@ -253,6 +249,16 @@ public:
     virtual SupportedRead supportedReadPixelsColorType(GrPixelConfig srcConfig,
                                                        const GrBackendFormat& srcFormat,
                                                        GrColorType dstColorType) const;
+
+    /**
+     * Do GrGpu::writePixels() and GrGpu::transferPixelsTo() support a src buffer where the row
+     * bytes is not equal to bpp * w?
+     */
+    bool writePixelsRowBytesSupport() const { return fWritePixelsRowBytesSupport; }
+    /**
+     * Does GrGpu::readPixels() support a dst buffer where the row bytes is not equal to bpp * w?
+     */
+    bool readPixelsRowBytesSupport() const { return fReadPixelsRowBytesSupport; }
 
     /** Are transfer buffers (to textures and from surfaces) supported? */
     bool transferBufferSupport() const { return fTransferBufferSupport; }
@@ -352,15 +358,35 @@ public:
      * returned.
      */
     virtual GrPixelConfig validateBackendRenderTarget(const GrBackendRenderTarget&,
-                                                      SkColorType) const = 0;
+                                                      GrColorType) const = 0;
 
-    virtual bool areColorTypeAndFormatCompatible(SkColorType ct, const GrBackendFormat&) const = 0;
+    bool areColorTypeAndFormatCompatible(SkColorType skCT,
+                                         const GrBackendFormat& format) const {
+        GrColorType grCT = SkColorTypeToGrColorType(skCT);
+        if (GrColorType::kUnknown == grCT) {
+            return false;
+        }
+
+        return this->areColorTypeAndFormatCompatible(grCT, format);
+    }
+
+    virtual bool areColorTypeAndFormatCompatible(GrColorType ct, const GrBackendFormat&) const = 0;
+
+    GrPixelConfig getConfigFromBackendFormat(const GrBackendFormat& format,
+                                             SkColorType skCT) const {
+        GrColorType grCT = SkColorTypeToGrColorType(skCT);
+        if (GrColorType::kUnknown == grCT) {
+            return kUnknown_GrPixelConfig;
+        }
+
+        return this->getConfigFromBackendFormat(format, grCT);
+    }
 
     // TODO: replace validateBackendRenderTarget with calls to getConfigFromBackendFormat?
     // TODO: it seems like we could pass the full SkImageInfo and validate its colorSpace too
     // Returns kUnknown if a valid config could not be determined.
     virtual GrPixelConfig getConfigFromBackendFormat(const GrBackendFormat& format,
-                                                     SkColorType ct) const = 0;
+                                                     GrColorType ct) const = 0;
 
     /**
      * Special method only for YUVA images. Returns a config that matches the backend format or
@@ -430,6 +456,8 @@ protected:
     bool fPerformStencilClearsAsDraws                : 1;
     bool fAllowCoverageCounting                      : 1;
     bool fTransferBufferSupport                      : 1;
+    bool fWritePixelsRowBytesSupport                 : 1;
+    bool fReadPixelsRowBytesSupport                  : 1;
 
     // Driver workaround
     bool fDriverBlacklistCCPR                        : 1;

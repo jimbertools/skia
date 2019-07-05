@@ -105,12 +105,23 @@ public:
 
     SkVector rounding() const override;
 
+    SkIPoint subpixelMask() const override {
+        return SkIPoint::Make((!fIsSubpixel || fAxisAlignment == kY_SkAxisAlignment) ? 0 : ~0,
+                              (!fIsSubpixel || fAxisAlignment == kX_SkAxisAlignment) ? 0 : ~0);
+    }
+
     const SkDescriptor& getDescriptor() const override;
 
     SkSpan<const SkGlyph*> metrics(SkSpan<const SkGlyphID> glyphIDs,
                                    const SkGlyph* results[]);
 
-    SkSpan<const SkGlyphPos> prepareForDrawing(const SkGlyphID glyphIDs[],
+    SkSpan<const SkGlyph*> preparePaths(SkSpan<const SkGlyphID> glyphIDs,
+                                        const SkGlyph* results[]);
+
+    SkSpan<const SkGlyph*> prepareImages(SkSpan<const SkPackedGlyphID> glyphIDs,
+                                         const SkGlyph* results[]);
+
+    SkSpan<const SkGlyphPos> prepareForDrawing(const SkPackedGlyphID packedGlyphIDs[],
                                                const SkPoint positions[],
                                                size_t n,
                                                int maxDimension,
@@ -165,9 +176,16 @@ private:
 
     SkGlyph* makeGlyph(SkPackedGlyphID);
 
-    // internalMetrics will only be called with a mutex already held.
-    SkSpan<const SkGlyph*> internalMetrics(
-            SkSpan<const SkGlyphID> glyphIDs, const SkGlyph* result[]);
+    enum PathDetail {
+        kMetricsOnly,
+        kMetricsAndPath
+    };
+
+    // internalPrepare will only be called with a mutex already held.
+    SkSpan<const SkGlyph*> internalPrepare(
+            SkSpan<const SkGlyphID> glyphIDs,
+            PathDetail pathDetail,
+            const SkGlyph** results);
 
     const SkAutoDescriptor                 fDesc;
     const std::unique_ptr<SkScalerContext> fScalerContext;
