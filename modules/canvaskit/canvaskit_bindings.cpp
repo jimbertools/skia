@@ -34,6 +34,8 @@
 #include "include/core/SkTypeface.h"
 #include "include/core/SkTypes.h"
 #include "include/core/SkVertices.h"
+#include "include/core/SkStream.h"
+#include "include/codec/SkCodec.h"
 #include "include/effects/SkCornerPathEffect.h"
 #include "include/effects/SkDashPathEffect.h"
 #include "include/effects/SkDiscretePathEffect.h"
@@ -1142,6 +1144,59 @@ EMSCRIPTEN_BINDINGS(Skia) {
             // Emscripten won't let us return bare pointers, but we can return ints just fine.
             return reinterpret_cast<uintptr_t>(self.texCoords());
         }));
+
+
+    class_<SkStream>("SkStream");
+    
+    class_<SkMemoryStream>("SkMemoryStream")
+      .class_function("_Create", optional_override([](uintptr_t bytes, size_t size)->std::unique_ptr<SkMemoryStream> {
+            
+            return std::unique_ptr<SkMemoryStream>(new SkMemoryStream(reinterpret_cast<void*>(bytes), size));
+        }), allow_raw_pointers())
+
+    ;
+//.smart_ptr<std::unique_ptr<SkCodec>>("std::unique_ptr<SkCodec>")
+    
+    class_<SkCodec>("SkCodec")
+       .class_function("_MakeFromStream", optional_override([](SkMemoryStream& stream)->std::unique_ptr<SkCodec> {
+            
+
+            std::unique_ptr<SkStream> skstream = std::unique_ptr<SkMemoryStream>(&stream);
+            return SkCodec::MakeFromStream(std::move(skstream));
+        }), allow_raw_pointers())
+        .function("_getPixels", optional_override([](SkCodec& self, SimpleImageInfo di, uintptr_t /* uint8_t* */ pPtr, size_t dstRowBytes, SkCodec::Options options)->SkCodec::Result /* BoneIndices* */{
+            // Emscripten won't let us return bare pointers, but we can return ints just fine.
+            const SkCodec::Options optionsconst = options;
+            uint8_t* pixels = reinterpret_cast<uint8_t*>(pPtr);
+            SkImageInfo dstInfo = toSkImageInfo(di);
+
+            return self.getPixels(dstInfo, pixels, dstRowBytes, &optionsconst);
+            
+        }));
+        //.function("height", &SkImage::height)
+
+
+
+    class_<SkCodec::Options>("CodecOptions")
+        .constructor<>()
+        .function("frameindex", optional_override([](SkCodec::Options& self, int index)->void {
+            self.fFrameIndex = index;
+        }))  
+         .function("frameindex", optional_override([](SkCodec::Options& self)->int {
+            return self.fFrameIndex;
+        })); 
+    
+
+    enum_<SkCodec::Result>("CodecResult")
+        .value("kSuccess",   SkCodec::kSuccess)
+        .value("kErrorInInput",   SkCodec::kErrorInInput)
+        .value("kInvalidConversion", SkCodec::kInvalidConversion)
+        .value("kInvalidScale", SkCodec::kInvalidScale)
+        .value("kInvalidParameters", SkCodec::kInvalidParameters)
+        .value("kInvalidInput", SkCodec::kInvalidInput)
+        .value("kCouldNotRewind", SkCodec::kCouldNotRewind)
+        .value("kInternalError", SkCodec::kInternalError)
+        .value("kUnimplemented", SkCodec::kUnimplemented);
 
     enum_<SkAlphaType>("AlphaType")
         .value("Opaque",   SkAlphaType::kOpaque_SkAlphaType)

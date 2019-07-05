@@ -164,12 +164,13 @@ echo "Compiling bitcode"
   skia_use_libheif=false \
   skia_use_libjpeg_turbo=true \
   skia_use_libpng=true \
-  skia_use_libwebp=false \
+  skia_use_libwebp=true \
   skia_use_lua=false \
   skia_use_piex=false \
   skia_use_system_libpng=true \
   skia_use_system_freetype2=true \
   skia_use_system_libjpeg_turbo = false \
+  skia_use_system_libwebp=false \
   skia_use_vulkan=false \
   skia_use_wuffs = true \
   skia_use_zlib=true \
@@ -185,7 +186,7 @@ echo "Compiling bitcode"
   skia_enable_pdf=false"
 
 # Build all the libs, we'll link the appropriate ones down below
-${NINJA} -C ${BUILD_DIR} libskia.a libskottie.a libsksg.a libskshaper.a libparticles.a $SHAPER_TARGETS
+${NINJA} -C ${BUILD_DIR} libskia.a libskottie.a libsksg.a libskshaper.a libparticles.a libwebp $SHAPER_TARGETS
 
 export EMCC_CLOSURE_ARGS="--externs $BASE_DIR/externs.js "
 
