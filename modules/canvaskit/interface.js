@@ -84,7 +84,17 @@ CanvasKit.onRuntimeInitialized = function() {
     return retVal;
   }
 
+  CanvasKit.SkCodec.prototype.getFrameInfo = function() {
+    return this._getFrameInfo();
+  };
 
+  CanvasKit.SkCodec.prototype.width = function() {
+    return this._width();
+  };
+
+  CanvasKit.SkCodec.prototype.height = function() {
+    return this._height();
+  };
 
   CanvasKit.SkMatrix.identity = function() {
     return [

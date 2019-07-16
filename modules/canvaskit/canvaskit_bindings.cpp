@@ -582,6 +582,8 @@ namespace emscripten {
 // the compiler is happy.
 EMSCRIPTEN_BINDINGS(Skia) {
 #if SK_SUPPORT_GPU
+    register_vector<SkCodec::FrameInfo>("vector<SkCodec::FrameInfo>");
+
     function("currentContext", &emscripten_webgl_get_current_context);
     function("setCurrentContext", &emscripten_webgl_make_context_current);
     function("MakeGrContext", &MakeGrContext);
@@ -1145,7 +1147,6 @@ EMSCRIPTEN_BINDINGS(Skia) {
             return reinterpret_cast<uintptr_t>(self.texCoords());
         }));
 
-
     class_<SkStream>("SkStream");
     
     class_<SkMemoryStream>("SkMemoryStream")
@@ -1172,10 +1173,23 @@ EMSCRIPTEN_BINDINGS(Skia) {
 
             return self.getPixels(dstInfo, pixels, dstRowBytes, &optionsconst);
             
+        }))
+        .function("_getFrameInfo", optional_override([](SkCodec& self)->JSArray {
+            auto frameInfos = self.getFrameInfo();
+            JSArray frameInfoArray = emscripten::val::array();
+            for (auto &frameInfo : frameInfos) 
+            {  
+                frameInfoArray.call<void>("push", frameInfo.fDuration);
+            }
+
+            return frameInfoArray;
+        }))
+        .function("_width", optional_override([](SkCodec& self)->int {
+            return self.dimensions().width();
+        }))
+        .function("_height", optional_override([](SkCodec& self)->int {
+            return self.dimensions().height();
         }));
-        //.function("height", &SkImage::height)
-
-
 
     class_<SkCodec::Options>("CodecOptions")
         .constructor<>()
@@ -1184,7 +1198,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         }))  
          .function("frameindex", optional_override([](SkCodec::Options& self)->int {
             return self.fFrameIndex;
-        })); 
+        }));
     
 
     enum_<SkCodec::Result>("CodecResult")
