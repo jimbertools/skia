@@ -13,7 +13,7 @@
 #include "src/gpu/GrOpFlushState.h"
 #include "src/gpu/mtl/GrMtlGpu.h"
 
-#import <metal/metal.h>
+#import <Metal/Metal.h>
 
 typedef uint32_t GrColor;
 class GrMtlBuffer;
@@ -56,8 +56,6 @@ public:
 
     void begin() override {}
     void end() override {}
-
-    void discard() override {}
 
     void insertEventMarker(const char* msg) override {}
 

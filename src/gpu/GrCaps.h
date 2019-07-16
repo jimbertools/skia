@@ -50,7 +50,6 @@ public:
      * Is there support for enabling/disabling sRGB writes for sRGB-capable color buffers?
      */
     bool srgbWriteControl() const { return fSRGBWriteControl; }
-    bool discardRenderTargetSupport() const { return fDiscardRenderTargetSupport; }
     bool gpuTracingSupport() const { return fGpuTracingSupport; }
     bool oversizedStencilSupport() const { return fOversizedStencilSupport; }
     bool textureBarrierSupport() const { return fTextureBarrierSupport; }
@@ -158,16 +157,16 @@ public:
 
     virtual bool isFormatSRGB(const GrBackendFormat&) const = 0;
 
-    virtual bool isFormatTexturable(SkColorType, const GrBackendFormat&) const = 0;
+    virtual bool isFormatTexturable(GrColorType, const GrBackendFormat&) const = 0;
     virtual bool isConfigTexturable(GrPixelConfig) const = 0;
 
     // Returns whether a texture of the given config can be copied to a texture of the same config.
-    virtual bool isFormatCopyable(SkColorType, const GrBackendFormat&) const = 0;
+    virtual bool isFormatCopyable(GrColorType, const GrBackendFormat&) const = 0;
     virtual bool isConfigCopyable(GrPixelConfig) const = 0;
 
     // Returns the maximum supported sample count for a config. 0 means the config is not renderable
     // 1 means the config is renderable but doesn't support MSAA.
-    virtual int maxRenderTargetSampleCount(SkColorType, const GrBackendFormat&) const = 0;
+    virtual int maxRenderTargetSampleCount(GrColorType, const GrBackendFormat&) const = 0;
     virtual int maxRenderTargetSampleCount(GrPixelConfig) const = 0;
 
     // Returns the number of samples to use when performing internal draws to the given config with
@@ -190,7 +189,7 @@ public:
     // sample count is 1 then 1 will be returned if non-MSAA rendering is supported, otherwise 0.
     // For historical reasons requestedCount==0 is handled identically to requestedCount==1.
     virtual int getRenderTargetSampleCount(int requestedCount,
-                                           SkColorType, const GrBackendFormat&) const = 0;
+                                           GrColorType, const GrBackendFormat&) const = 0;
     virtual int getRenderTargetSampleCount(int requestedCount, GrPixelConfig) const = 0;
 
     /**
@@ -360,33 +359,26 @@ public:
     virtual GrPixelConfig validateBackendRenderTarget(const GrBackendRenderTarget&,
                                                       GrColorType) const = 0;
 
-    bool areColorTypeAndFormatCompatible(SkColorType skCT,
+    bool areColorTypeAndFormatCompatible(GrColorType grCT,
                                          const GrBackendFormat& format) const {
-        GrColorType grCT = SkColorTypeToGrColorType(skCT);
         if (GrColorType::kUnknown == grCT) {
             return false;
         }
 
-        return this->areColorTypeAndFormatCompatible(grCT, format);
-    }
-
-    virtual bool areColorTypeAndFormatCompatible(GrColorType ct, const GrBackendFormat&) const = 0;
-
-    GrPixelConfig getConfigFromBackendFormat(const GrBackendFormat& format,
-                                             SkColorType skCT) const {
-        GrColorType grCT = SkColorTypeToGrColorType(skCT);
-        if (GrColorType::kUnknown == grCT) {
-            return kUnknown_GrPixelConfig;
-        }
-
-        return this->getConfigFromBackendFormat(format, grCT);
+        return this->onAreColorTypeAndFormatCompatible(grCT, format);
     }
 
     // TODO: replace validateBackendRenderTarget with calls to getConfigFromBackendFormat?
     // TODO: it seems like we could pass the full SkImageInfo and validate its colorSpace too
     // Returns kUnknown if a valid config could not be determined.
-    virtual GrPixelConfig getConfigFromBackendFormat(const GrBackendFormat& format,
-                                                     GrColorType ct) const = 0;
+    GrPixelConfig getConfigFromBackendFormat(const GrBackendFormat& format,
+                                             GrColorType grCT) const {
+        if (GrColorType::kUnknown == grCT) {
+            return kUnknown_GrPixelConfig;
+        }
+
+        return this->onGetConfigFromBackendFormat(format, grCT);
+    }
 
     /**
      * Special method only for YUVA images. Returns a config that matches the backend format or
@@ -395,9 +387,7 @@ public:
     virtual GrPixelConfig getYUVAConfigFromBackendFormat(const GrBackendFormat& format) const = 0;
 
     /** These are used when creating a new texture internally. */
-    virtual GrBackendFormat getBackendFormatFromGrColorType(GrColorType ct,
-                                                            GrSRGBEncoded srgbEncoded) const = 0;
-    GrBackendFormat getBackendFormatFromColorType(SkColorType ct) const;
+    virtual GrBackendFormat getBackendFormatFromColorType(GrColorType ct) const = 0;
 
     virtual GrBackendFormat getBackendFormatFromCompressionType(SkImage::CompressionType) const = 0;
 
@@ -433,7 +423,6 @@ protected:
     bool fMipMapSupport                              : 1;
     bool fSRGBSupport                                : 1;
     bool fSRGBWriteControl                           : 1;
-    bool fDiscardRenderTargetSupport                 : 1;
     bool fReuseScratchTextures                       : 1;
     bool fReuseScratchBuffers                        : 1;
     bool fGpuTracingSupport                          : 1;
@@ -509,6 +498,12 @@ private:
     virtual bool onIsWindowRectanglesSupportedForRT(const GrBackendRenderTarget&) const {
         return true;
     }
+
+    virtual GrPixelConfig onGetConfigFromBackendFormat(const GrBackendFormat& format,
+                                                       GrColorType ct) const = 0;
+
+    virtual bool onAreColorTypeAndFormatCompatible(GrColorType, const GrBackendFormat&) const = 0;
+
 
     bool fSuppressPrints : 1;
     bool fWireframeMode  : 1;

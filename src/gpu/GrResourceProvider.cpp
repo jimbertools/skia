@@ -42,6 +42,33 @@ GrResourceProvider::GrResourceProvider(GrGpu* gpu, GrResourceCache* cache, GrSin
     fCaps = sk_ref_sp(fGpu->caps());
 }
 
+// Ensures the row bytes are populated (not 0) and makes a copy to a temporary
+// to make the row bytes tight if necessary. Returns false if the input row bytes are invalid.
+static bool prepare_level(const GrMipLevel& inLevel, size_t bpp, int w, int h, bool rowBytesSupport,
+                          GrMipLevel* outLevel, std::unique_ptr<char[]>* data) {
+    if (!inLevel.fPixels) {
+        outLevel->fPixels = nullptr;
+        outLevel->fRowBytes = 0;
+        return true;
+    }
+    size_t minRB = w * bpp;
+    size_t actualRB = inLevel.fRowBytes ? inLevel.fRowBytes : minRB;
+    if (actualRB < minRB) {
+        return false;
+    }
+    if (actualRB == minRB || rowBytesSupport) {
+        outLevel->fRowBytes = actualRB;
+        outLevel->fPixels = inLevel.fPixels;
+    } else {
+        data->reset(new char[minRB * h]);
+        outLevel->fPixels = data->get();
+        outLevel->fRowBytes = minRB;
+        SkRectMemcpy(data->get(), outLevel->fRowBytes, inLevel.fPixels, inLevel.fRowBytes, minRB,
+                     h);
+    }
+    return true;
+}
+
 sk_sp<GrTexture> GrResourceProvider::createTexture(const GrSurfaceDesc& desc, SkBudgeted budgeted,
                                                    const GrMipLevel texels[], int mipLevelCount) {
     ASSERT_SINGLE_OWNER
@@ -66,30 +93,9 @@ sk_sp<GrTexture> GrResourceProvider::createTexture(const GrSurfaceDesc& desc, Sk
         int h = desc.fHeight;
         size_t bpp = GrBytesPerPixel(desc.fConfig);
         for (int i = 0; i < mipLevelCount; ++i) {
-            if (texels->fPixels) {
-                size_t minRB = w * bpp;
-                if (!texels->fRowBytes) {
-                    tmpTexels[i].fRowBytes = minRB;
-                    tmpTexels[i].fPixels = texels[i].fPixels;
-                } else {
-                    if (texels[i].fRowBytes < minRB) {
-                        return nullptr;
-                    }
-                    if (!this->caps()->writePixelsRowBytesSupport() &&
-                        texels[i].fRowBytes != minRB) {
-                        auto copy = new char[minRB * h];
-                        tmpDatas[i].reset(copy);
-                        SkRectMemcpy(copy, minRB, texels[i].fPixels, texels[i].fRowBytes, minRB, h);
-                        tmpTexels[i].fPixels = copy;
-                        tmpTexels[i].fRowBytes = minRB;
-                    } else {
-                        tmpTexels[i].fPixels = texels[i].fPixels;
-                        tmpTexels[i].fRowBytes = texels[i].fRowBytes;
-                    }
-                }
-            } else {
-                tmpTexels[i].fPixels = nullptr;
-                tmpTexels[i].fRowBytes = 0;
+            if (!prepare_level(texels[i], bpp, w, h, this->caps()->writePixelsRowBytesSupport(),
+                               &tmpTexels[i], &tmpDatas[i])) {
+                return nullptr;
             }
             w = std::max(w / 2, 1);
             h = std::max(h / 2, 1);
@@ -130,36 +136,38 @@ sk_sp<GrTexture> GrResourceProvider::createTexture(const GrSurfaceDesc& desc,
     GrContext* context = fGpu->getContext();
     GrProxyProvider* proxyProvider = context->priv().proxyProvider();
 
-    SkColorType colorType;
-    if (GrPixelConfigToColorType(desc.fConfig, &colorType)) {
-        sk_sp<GrTexture> tex = (SkBackingFit::kApprox == fit)
-                ? this->createApproxTexture(desc, flags)
-                : this->createTexture(desc, budgeted, flags);
-        if (!tex) {
-            return nullptr;
-        }
-
-        sk_sp<GrTextureProxy> proxy = proxyProvider->createWrapped(std::move(tex),
-                                                                   kTopLeft_GrSurfaceOrigin);
-        if (!proxy) {
-            return nullptr;
-        }
-        // Here we don't really know the alpha type of the data we want to upload. All we really
-        // care about is that it is not converted. So we use the same alpha type of the data
-        // and the surface context.
-        static constexpr auto kAlphaType = kPremul_SkAlphaType;
-        auto srcInfo = SkImageInfo::Make(desc.fWidth, desc.fHeight, colorType, kAlphaType);
-        sk_sp<GrSurfaceContext> sContext = context->priv().makeWrappedSurfaceContext(
-                std::move(proxy), SkColorTypeToGrColorType(colorType), kAlphaType);
-        if (!sContext) {
-            return nullptr;
-        }
-        SkAssertResult(
-                sContext->writePixels(srcInfo, mipLevel.fPixels, mipLevel.fRowBytes, {0, 0}));
-        return sk_ref_sp(sContext->asTextureProxy()->peekTexture());
-    } else {
-        return fGpu->createTexture(desc, budgeted, &mipLevel, 1);
+    size_t bpp = GrBytesPerPixel(desc.fConfig);
+    std::unique_ptr<char[]> tmpData;
+    GrMipLevel tmpLevel;
+    if (!prepare_level(mipLevel, bpp, desc.fWidth, desc.fHeight,
+                       this->caps()->writePixelsRowBytesSupport(), &tmpLevel, &tmpData)) {
+        return nullptr;
     }
+
+    GrColorType colorType = GrPixelConfigToColorType(desc.fConfig);
+    sk_sp<GrTexture> tex = (SkBackingFit::kApprox == fit)
+                                   ? this->createApproxTexture(desc, flags)
+                                   : this->createTexture(desc, budgeted, flags);
+    if (!tex) {
+        return nullptr;
+    }
+
+    sk_sp<GrTextureProxy> proxy = proxyProvider->createWrapped(tex, kTopLeft_GrSurfaceOrigin);
+    if (!proxy) {
+        return nullptr;
+    }
+    // Here we don't really know the alpha type of the data we want to upload. All we really
+    // care about is that it is not converted. So we use the same alpha type for the data
+    // and the surface context.
+    static constexpr auto kAlphaType = kPremul_SkAlphaType;
+    sk_sp<GrSurfaceContext> sContext =
+            context->priv().makeWrappedSurfaceContext(std::move(proxy), colorType, kAlphaType);
+    if (!sContext) {
+        return nullptr;
+    }
+    GrPixelInfo srcInfo(colorType, kAlphaType, nullptr, desc.fWidth, desc.fHeight);
+    SkAssertResult(sContext->writePixels(srcInfo, tmpLevel.fPixels, tmpLevel.fRowBytes, {0, 0}));
+    return tex;
 }
 
 sk_sp<GrTexture> GrResourceProvider::createCompressedTexture(int width, int height,
@@ -195,6 +203,32 @@ sk_sp<GrTexture> GrResourceProvider::createTexture(const GrSurfaceDesc& desc, Sk
     return fGpu->createTexture(desc, budgeted);
 }
 
+// Map 'value' to a larger multiple of 2. Values <= 'kMagicTol' will pop up to
+// the next power of 2. Those above 'kMagicTol' will only go up half the floor power of 2.
+uint32_t GrResourceProvider::MakeApprox(uint32_t value) {
+    static const int kMagicTol = 1024;
+
+    value = SkTMax(kMinScratchTextureSize, value);
+
+    if (SkIsPow2(value)) {
+        return value;
+    }
+
+    uint32_t ceilPow2 = GrNextPow2(value);
+    if (value <= kMagicTol) {
+        return ceilPow2;
+    }
+
+    uint32_t floorPow2 = ceilPow2 >> 1;
+    uint32_t mid = floorPow2 + (floorPow2 >> 1);
+
+    if (value <= mid) {
+        return mid;
+    }
+
+    return ceilPow2;
+}
+
 sk_sp<GrTexture> GrResourceProvider::createApproxTexture(const GrSurfaceDesc& desc,
                                                          Flags flags) {
     ASSERT_SINGLE_OWNER
@@ -219,12 +253,12 @@ sk_sp<GrTexture> GrResourceProvider::createApproxTexture(const GrSurfaceDesc& de
 
     SkTCopyOnFirstWrite<GrSurfaceDesc> copyDesc(desc);
 
-    // bin by pow2 with a reasonable min
+    // bin by some multiple or power of 2 with a reasonable min
     if (!SkToBool(desc.fFlags & kPerformInitialClear_GrSurfaceFlag) &&
         (fGpu->caps()->reuseScratchTextures() || (desc.fFlags & kRenderTarget_GrSurfaceFlag))) {
         GrSurfaceDesc* wdesc = copyDesc.writable();
-        wdesc->fWidth  = SkTMax(kMinScratchTextureSize, GrNextPow2(desc.fWidth));
-        wdesc->fHeight = SkTMax(kMinScratchTextureSize, GrNextPow2(desc.fHeight));
+        wdesc->fWidth = MakeApprox(wdesc->fWidth);
+        wdesc->fHeight = MakeApprox(wdesc->fHeight);
     }
 
     if (auto tex = this->refScratchTexture(*copyDesc, flags)) {
@@ -259,6 +293,7 @@ sk_sp<GrTexture> GrResourceProvider::refScratchTexture(const GrSurfaceDesc& desc
                                                                     GrSurface::WorstCaseSize(desc),
                                                                     scratchFlags);
         if (resource) {
+            fGpu->stats()->incNumScratchTexturesReused();
             GrSurface* surface = static_cast<GrSurface*>(resource);
             return sk_sp<GrTexture>(surface->asTexture());
         }

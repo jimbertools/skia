@@ -274,20 +274,53 @@ void GrGLClearErr(const GrGLInterface* gl);
 // call glGetError without doing a redundant error check or logging.
 #define GR_GL_GET_ERROR(IFACE) (IFACE)->fFunctions.fGetError()
 
+static constexpr GrGLFormat GrGLFormatFromGLEnum(GrGLenum glFormat) {
+    switch (glFormat) {
+        case GR_GL_RGBA8:                return GrGLFormat::kRGBA8;
+        case GR_GL_R8:                   return GrGLFormat::kR8;
+        case GR_GL_ALPHA8:               return GrGLFormat::kALPHA8;
+        case GR_GL_LUMINANCE8:           return GrGLFormat::kLUMINANCE8;
+        case GR_GL_BGRA8:                return GrGLFormat::kBGRA8;
+        case GR_GL_RGB565:               return GrGLFormat::kRGB565;
+        case GR_GL_RGBA16F:              return GrGLFormat::kRGBA16F;
+        case GR_GL_R16F:                 return GrGLFormat::kR16F;
+        case GR_GL_RGB8:                 return GrGLFormat::kRGB8;
+        case GR_GL_RG8:                  return GrGLFormat::kRG8;
+        case GR_GL_RGB10_A2:             return GrGLFormat::kRGB10_A2;
+        case GR_GL_RGBA4:                return GrGLFormat::kRGBA4;
+        case GR_GL_RGBA32F:              return GrGLFormat::kRGBA32F;
+        case GR_GL_RG32F:                return GrGLFormat::kRG32F;
+        case GR_GL_SRGB8_ALPHA8:         return GrGLFormat::kSRGB8_ALPHA8;
+        case GR_GL_COMPRESSED_RGB8_ETC2: return GrGLFormat::kCOMPRESSED_RGB8_ETC2;
+        case GR_GL_COMPRESSED_ETC1_RGB8: return GrGLFormat::kCOMPRESSED_ETC1_RGB8;
+        case GR_GL_R16:                  return GrGLFormat::kR16;
+        case GR_GL_RG16:                 return GrGLFormat::kRG16;
+        case GR_GL_RGBA16:               return GrGLFormat::kRGBA16;
+        case GR_GL_RG16F:                return GrGLFormat::kRG16F;
+
+        default:                         return GrGLFormat::kUnknown;
+    }
+}
+
+static inline GrGLFormat GrGLBackendFormatToGLFormat(const GrBackendFormat& format) {
+    if (const GrGLenum* glFormat = format.getGLFormat()) {
+        return GrGLFormatFromGLEnum(*glFormat);
+    }
+    return GrGLFormat::kUnknown;
+}
+
 GrGLenum GrToGLStencilFunc(GrStencilTest test);
 
 /**
  * Returns true if the format is compressed.
  */
-bool GrGLFormatIsCompressed(GrGLenum glFormat);
+bool GrGLFormatIsCompressed(GrGLFormat);
 
 /**
- * Maps a gl format into the CompressionType enum if appropriate.
+ * Maps a GrGLFormat into the CompressionType enum if appropriate.
  */
-bool GrGLFormatToCompressionType(GrGLenum glFormat, SkImage::CompressionType*);
+bool GrGLFormatToCompressionType(GrGLFormat, SkImage::CompressionType*);
 
-size_t GrGLBytesPerFormat(GrGLenum glFormat);
-
-bool GrGLFormatIsSupported(GrGLenum format);
+size_t GrGLBytesPerFormat(GrGLFormat);
 
 #endif

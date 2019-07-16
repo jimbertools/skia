@@ -22,7 +22,6 @@
 #include "include/utils/SkRandom.h"
 #include "samplecode/Sample.h"
 #include "src/utils/SkUTF.h"
-#include "tools/timer/AnimTimer.h"
 
 static SkRandom gRand;
 
@@ -208,7 +207,7 @@ protected:
         canvas->drawBitmap(bm2, SkIntToScalar(10), SkIntToScalar(10), nullptr);
     }
 
-    bool onAnimate(const AnimTimer&) override {
+    bool onAnimate(double /*nanos*/) override {
         if (fDoAA) {
             fProcIndex = cycle_hairproc_index(fProcIndex);
             // todo: signal that we want to rebuild our TITLE
@@ -217,7 +216,7 @@ protected:
         return true;
     }
 
-    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, unsigned modi) override {
+    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, ModifierKey modi) override {
         fDoAA = !fDoAA;
         return this->INHERITED::onFindClickHandler(x, y, modi);
     }

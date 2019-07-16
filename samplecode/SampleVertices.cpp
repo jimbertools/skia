@@ -99,8 +99,8 @@ protected:
         }
     }
 
-    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, unsigned) override {
-        return new Click(this);
+    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, ModifierKey) override {
+        return new Click();
     }
 
     bool onClick(Click* click) override {

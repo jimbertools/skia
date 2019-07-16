@@ -17,6 +17,9 @@
 #include <vector>
 
 namespace SkSL {
+
+#if defined(SK_ENABLE_SKSL_INTERPRETER)
+
 namespace Interpreter {
 
 constexpr int VecWidth = ByteCode::kVecWidth;
@@ -376,6 +379,12 @@ static void innerRun(const ByteCode* byteCode, const ByteCodeFunction* f, VValue
     I32* maskPtr = maskStack;
     I32* contPtr = contStack;
     I32* loopPtr = loopStack;
+
+    if (f->fConditionCount + 1 > (int)SK_ARRAY_COUNT(condStack) ||
+        f->fLoopCount + 1 > (int)SK_ARRAY_COUNT(loopStack)) {
+        SkDEBUGFAIL("Function with too much nested control flow to evaluate");
+        return;
+    }
 
     auto mask = [&]() { return *maskPtr & *loopPtr; };
 
@@ -985,21 +994,31 @@ static void innerRun(const ByteCode* byteCode, const ByteCodeFunction* f, VValue
 
 } // namespace Interpreter
 
+#endif // SK_ENABLE_SKSL_INTERPRETER
+
 void ByteCodeFunction::disassemble() const {
+#if defined(SK_ENABLE_SKSL_INTERPRETER)
     const uint8_t* ip = fCode.data();
     while (ip < fCode.data() + fCode.size()) {
         printf("%d: ", (int)(ip - fCode.data()));
         ip = Interpreter::disassemble_instruction(ip);
         printf("\n");
     }
+#endif
 }
 
 void ByteCode::run(const ByteCodeFunction* f, float* args, float* outReturn, int N,
                    const float* uniforms, int uniformCount) const {
+#if defined(SK_ENABLE_SKSL_INTERPRETER)
 #ifdef TRACE
     f->disassemble();
 #endif
     Interpreter::VValue stack[128];
+    int stackNeeded = f->fParameterCount + f->fLocalCount + f->fStackCount;
+    if (stackNeeded > (int)SK_ARRAY_COUNT(stack)) {
+        SkDEBUGFAIL("Function requires too much stack space to evaluate");
+        return;
+    }
 
     SkASSERT(uniformCount == (int)fInputSlots.size());
     Interpreter::VValue globals[32];
@@ -1055,15 +1074,24 @@ void ByteCode::run(const ByteCodeFunction* f, float* args, float* outReturn, int
         N -= w;
         baseIndex += w;
     }
+#else
+    SkDEBUGFAIL("ByteCode interpreter not enabled");
+#endif
 }
 
 void ByteCode::runStriped(const ByteCodeFunction* f, float* args[], int nargs, int N,
                           const float* uniforms, int uniformCount,
                           float* outArgs[], int outCount) const {
+#if defined(SK_ENABLE_SKSL_INTERPRETER)
 #ifdef TRACE
     f->disassemble();
 #endif
     Interpreter::VValue stack[128];
+    int stackNeeded = f->fParameterCount + f->fLocalCount + f->fStackCount;
+    if (stackNeeded > (int)SK_ARRAY_COUNT(stack)) {
+        SkDEBUGFAIL("Function requires too much stack space to evaluate");
+        return;
+    }
 
     // innerRun just takes outArgs, so clear it if the count is zero
     if (outCount == 0) {
@@ -1110,6 +1138,9 @@ void ByteCode::runStriped(const ByteCodeFunction* f, float* args[], int nargs, i
         N -= w;
         baseIndex += w;
     }
+#else
+    SkDEBUGFAIL("ByteCode interpreter not enabled");
+#endif
 }
 
 } // namespace SkSL

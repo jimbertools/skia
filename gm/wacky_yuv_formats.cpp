@@ -917,11 +917,12 @@ static void draw_row_label(SkCanvas* canvas, int y, int yuvFormat) {
 static void make_RG_88(const GrCaps* caps,
                        const SkBitmap& bm, YUVFormat yuvFormat,
                        SkAutoTMalloc<uint8_t>* pixels,
-                       GrBackendFormat* format) {
+                       GrBackendFormat* format, size_t* rowBytes) {
     SkASSERT(kNV12_YUVFormat == yuvFormat || kNV21_YUVFormat == yuvFormat);
     SkASSERT(kRGBA_8888_SkColorType == bm.colorType());     // uv stored in rg
 
-    pixels->reset(2 * sizeof(uint8_t) * bm.width() * bm.height());
+    *rowBytes = bm.width() * 2 * sizeof(uint8_t);
+    pixels->reset(*rowBytes * bm.height());
     uint8_t* currPixel = pixels->get();
     for (int y = 0; y < bm.height(); ++y) {
         for (int x = 0; x < bm.width(); ++x) {
@@ -934,19 +935,19 @@ static void make_RG_88(const GrCaps* caps,
             currPixel += 2;
         }
     }
-    *format = caps->getBackendFormatFromGrColorType(GrColorType::kRG_88,
-                                                    GrSRGBEncoded::kNo);
+    *format = caps->getBackendFormatFromColorType(GrColorType::kRG_88);
 }
 
 static void make_RG_1616(const GrCaps* caps,
                          const SkBitmap& bm, YUVFormat yuvFormat,
                          SkAutoTMalloc<uint8_t>* pixels,
-                         GrBackendFormat* format) {
+                         GrBackendFormat* format, size_t* rowBytes) {
     SkASSERT(kP016_YUVFormat == yuvFormat || kP010_YUVFormat == yuvFormat);
     SkASSERT(kRGBA_8888_SkColorType == bm.colorType());     // uv stored in rg
 
     uint16_t u16, v16;
-    pixels->reset(2 * sizeof(uint16_t) * bm.width() * bm.height());
+    *rowBytes = bm.width() * 2 * sizeof(uint16_t);
+    pixels->reset(*rowBytes * bm.height());
     uint16_t* currPixel = (uint16_t*) pixels->get();
     for (int y = 0; y < bm.height(); ++y) {
         for (int x = 0; x < bm.width(); ++x) {
@@ -968,20 +969,21 @@ static void make_RG_1616(const GrCaps* caps,
         }
     }
 
-    *format = caps->getBackendFormatFromGrColorType(GrColorType::kRG_1616,
-                                                    GrSRGBEncoded::kNo);
+    *format = caps->getBackendFormatFromColorType(GrColorType::kRG_1616);
 }
 
 static void make_RGBA_16(const GrCaps* caps,
                          const SkBitmap& bm,
                          YUVFormat yuvFormat,
                          SkAutoTMalloc<uint8_t>* pixels,
-                         GrBackendFormat* format) {
+                         GrBackendFormat* format,
+                         size_t* rowBytes) {
     SkASSERT(kY416_YUVFormat == yuvFormat);
     SkASSERT(kRGBA_8888_SkColorType == bm.colorType());
 
     uint16_t y16, u16, v16, a16;
-    pixels->reset(4 * sizeof(uint16_t) * bm.width() * bm.height());
+    *rowBytes = 4 * sizeof(uint16_t) * bm.width();
+    pixels->reset(*rowBytes * bm.height());
     uint16_t* currPixel = (uint16_t*) pixels->get();
     for (int y = 0; y < bm.height(); ++y) {
         for (int x = 0; x < bm.width(); ++x) {
@@ -1000,8 +1002,7 @@ static void make_RGBA_16(const GrCaps* caps,
         }
     }
 
-    *format = caps->getBackendFormatFromGrColorType(GrColorType::kRGBA_16161616,
-                                                    GrSRGBEncoded::kNo);
+    *format = caps->getBackendFormatFromColorType(GrColorType::kRGBA_16161616);
     return;
 }
 
@@ -1009,12 +1010,14 @@ static void make_R_16(const GrCaps* caps,
                       const SkBitmap& bm,
                       YUVFormat yuvFormat,
                       SkAutoTMalloc<uint8_t>* pixels,
-                      GrBackendFormat* format) {
+                      GrBackendFormat* format,
+                      size_t* rowBytes) {
     SkASSERT(kP016_YUVFormat == yuvFormat || kP010_YUVFormat == yuvFormat);
     SkASSERT(kAlpha_8_SkColorType == bm.colorType());
 
     uint16_t y16;
-    pixels->reset(sizeof(uint16_t) * bm.width() * bm.height());
+    *rowBytes = sizeof(uint16_t) * bm.width();
+    pixels->reset(*rowBytes * bm.height());
     uint16_t* currPixel = (uint16_t*) pixels->get();
     for (int y = 0; y < bm.height(); ++y) {
         for (int x = 0; x < bm.width(); ++x) {
@@ -1032,7 +1035,7 @@ static void make_R_16(const GrCaps* caps,
         }
     }
 
-    *format = caps->getBackendFormatFromGrColorType(GrColorType::kR_16, GrSRGBEncoded::kNo);
+    *format = caps->getBackendFormatFromColorType(GrColorType::kR_16);
 }
 
 static GrBackendTexture create_yuva_texture(GrContext* context, const SkBitmap& bm,
@@ -1055,24 +1058,25 @@ static GrBackendTexture create_yuva_texture(GrContext* context, const SkBitmap& 
 
         SkAutoTMalloc<uint8_t> pixels;
         GrBackendFormat format;
+        size_t rowBytes;
 
         if (2 == channelCount) {
             if (format_uses_16_bpp(yuvFormat)) {
-                make_RG_1616(caps, bm, yuvFormat, &pixels, &format);
+                make_RG_1616(caps, bm, yuvFormat, &pixels, &format, &rowBytes);
             } else {
-                make_RG_88(caps, bm, yuvFormat, &pixels, &format);
+                make_RG_88(caps, bm, yuvFormat, &pixels, &format, &rowBytes);
             }
         } else {
             if (kRGBA_8888_SkColorType == bm.colorType()) {
-                make_RGBA_16(caps, bm, yuvFormat, &pixels, &format);
+                make_RGBA_16(caps, bm, yuvFormat, &pixels, &format, &rowBytes);
             } else {
-                make_R_16(caps, bm, yuvFormat, &pixels, &format);
+                make_R_16(caps, bm, yuvFormat, &pixels, &format, &rowBytes);
             }
         }
 
         tex = gpu->createBackendTexture(bm.width(), bm.height(), format,
                                         GrMipMapped::kNo, GrRenderable::kNo,
-                                        pixels, 0, nullptr, GrProtected::kNo);
+                                        pixels, rowBytes, nullptr, GrProtected::kNo);
     } else {
         tex = context->priv().createBackendTexture(&bm.pixmap(), 1,
                                                    GrRenderable::kNo, GrProtected::kNo);

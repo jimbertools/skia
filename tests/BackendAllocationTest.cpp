@@ -574,7 +574,6 @@ DEF_GPUTEST_FOR_ALL_GL_CONTEXTS(GLBackendAllocationTest, reporter, ctxInfo) {
           kRGBA_16161616_GrPixelConfig,     SkColors::kLtGray   },
         { kUnknown_SkColorType,             GR_GL_RG16F,
           kRG_half_GrPixelConfig,           SkColors::kYellow   },
-
     };
 
     for (auto combo : combinations) {
@@ -593,7 +592,17 @@ DEF_GPUTEST_FOR_ALL_GL_CONTEXTS(GLBackendAllocationTest, reporter, ctxInfo) {
             // We current disallow uninitialized ETC1 textures in the GL backend
             continue;
         }
-        if (!glCaps->isFormatTexturable(combo.fColorType, format)) {
+
+        GrColorType grCT = SkColorTypeToGrColorType(combo.fColorType);
+        // TODO: Once SkColorType has an SRGB type we can remove this manual setting.
+        if (glCaps->isFormatSRGB(format)) {
+            if (grCT != GrColorType::kRGBA_8888) {
+                continue;
+            }
+            grCT = GrColorType::kRGBA_8888_SRGB;
+        }
+
+        if (!glCaps->isFormatTexturable(grCT, format)) {
             continue;
         }
 
@@ -696,7 +705,7 @@ DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkBackendAllocationTest, reporter, ctxInfo) {
         { kRGBA_1010102_SkColorType, VK_FORMAT_A2B10G10R10_UNORM_PACK32, { 0.5f, 0, 0, 1.0f } },
         { kRGB_565_SkColorType,      VK_FORMAT_R5G6B5_UNORM_PACK16,      SkColors::kRed       },
 
-        { kARGB_4444_SkColorType,    VK_FORMAT_R4G4B4A4_UNORM_PACK16,    SkColors::kGreen     },
+        { kARGB_4444_SkColorType,    VK_FORMAT_R4G4B4A4_UNORM_PACK16,    SkColors::kCyan      },
         { kARGB_4444_SkColorType,    VK_FORMAT_B4G4R4A4_UNORM_PACK16,    SkColors::kYellow    },
 
         { kAlpha_8_SkColorType,      VK_FORMAT_R8_UNORM,                 kTransCol            },
@@ -725,7 +734,7 @@ DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkBackendAllocationTest, reporter, ctxInfo) {
     };
 
     for (auto combo : combinations) {
-        if (!vkCaps->isFormatTexturable(combo.fFormat)) {
+        if (!vkCaps->isVkFormatTexturable(combo.fFormat)) {
             continue;
         }
 
@@ -765,12 +774,37 @@ DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkBackendAllocationTest, reporter, ctxInfo) {
                 }
 
                 {
-                    auto createWithColorMtd = [format](GrContext* context,
-                                                       const SkColor4f& color,
-                                                       GrMipMapped mipMapped,
-                                                       GrRenderable renderable) {
+                    // We're creating backend textures without specifying a color type "view" of
+                    // them at the public API level. Therefore, Ganesh will not apply any swizzles
+                    // before writing the color to the texture. However, our validation code does
+                    // rely on interpreting the texture contents via a SkColorType and therefore
+                    // swizzles may be applied during the read step.
+                    // Ideally we'd update our validation code to use a "raw" read that doesn't
+                    // impose a color type but for now we just munge the data we upload to match the
+                    // expectation.
+                    GrSwizzle swizzle;
+                    switch (combo.fColorType) {
+                        case kAlpha_8_SkColorType:
+                            SkASSERT(combo.fFormat == VK_FORMAT_R8_UNORM);
+                            swizzle = GrSwizzle("aaaa");
+                            break;
+                        case kARGB_4444_SkColorType:
+                            if (combo.fFormat == VK_FORMAT_B4G4R4A4_UNORM_PACK16) {
+                                swizzle = GrSwizzle("bgra");
+                            }
+                            break;
+                        default:
+                            swizzle = GrSwizzle("rgba");
+                            break;
+                    }
+                    auto createWithColorMtd = [format, swizzle](GrContext* context,
+                                                                const SkColor4f& color,
+                                                                GrMipMapped mipMapped,
+                                                                GrRenderable renderable) {
+                        auto swizzledColor = swizzle.applyTo(color);
                         GrBackendTexture beTex = context->createBackendTexture(32, 32, format,
-                                                                               color, mipMapped,
+                                                                               swizzledColor,
+                                                                               mipMapped,
                                                                                renderable,
                                                                                GrProtected::kNo);
                         check_vk_layout(beTex, GrRenderable::kYes == renderable
@@ -778,7 +812,6 @@ DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkBackendAllocationTest, reporter, ctxInfo) {
                                                         : VkLayout::kReadOnlyOptimal);
                         return beTex;
                     };
-
                     test_color_init(context, reporter, createWithColorMtd,
                                     combo.fColorType, combo.fColor, mipMapped, renderable);
                 }

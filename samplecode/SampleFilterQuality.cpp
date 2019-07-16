@@ -16,7 +16,7 @@
 #include "include/utils/SkRandom.h"
 #include "samplecode/Sample.h"
 #include "tools/Resources.h"
-#include "tools/timer/AnimTimer.h"
+#include "tools/timer/TimeUtils.h"
 
 static sk_sp<SkSurface> make_surface(SkCanvas* canvas, const SkImageInfo& info) {
     auto surface = canvas->makeSurface(info);
@@ -168,9 +168,7 @@ public:
 protected:
     SkString name() override { return SkString("FilterQuality"); }
 
-    bool onQuery(Sample::Event* evt) override {
-        SkUnichar uni;
-        if (Sample::CharQ(*evt, &uni)) {
+    bool onChar(SkUnichar uni) override {
             switch (uni) {
                 case '1': fAngle.inc(-ANGLE_DELTA); return true;
                 case '2': fAngle.inc( ANGLE_DELTA); return true;
@@ -179,8 +177,7 @@ protected:
                 case '5': fShowFatBits = !fShowFatBits; return true;
                 default: break;
             }
-        }
-        return this->INHERITED::onQuery(evt);
+            return false;
     }
 
     void drawTheImage(SkCanvas* canvas, const SkISize& size, SkFilterQuality filter,
@@ -281,8 +278,8 @@ protected:
         canvas->drawString(SkStringPrintf("%.8g", trans[1]     ), textX, 250, font, paint);
     }
 
-    bool onAnimate(const AnimTimer& timer) override {
-        fCurrTime = timer.msec();
+    bool onAnimate(double nanos) override {
+        fCurrTime = TimeUtils::NanosToMSec(nanos);
         return true;
     }
 

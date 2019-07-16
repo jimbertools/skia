@@ -8,7 +8,7 @@
 #include "include/core/SkRRect.h"
 #include "include/utils/SkRandom.h"
 #include "samplecode/Sample.h"
-#include "tools/timer/AnimTimer.h"
+#include "tools/timer/TimeUtils.h"
 
 #include "modules/sksg/include/SkSGDraw.h"
 #include "modules/sksg/include/SkSGGroup.h"
@@ -152,9 +152,7 @@ protected:
 
     SkString name() override { return SkString("SGPong"); }
 
-    bool onQuery(Event* evt) override {
-        SkUnichar uni;
-        if (Sample::CharQ(*evt, &uni)) {
+    bool onChar(SkUnichar uni) override {
             switch (uni) {
                 case '[':
                     fTimeScale = SkTPin(fTimeScale - 0.1f, kTimeScaleMin, kTimeScaleMax);
@@ -169,8 +167,7 @@ protected:
                 default:
                     break;
             }
-        }
-        return this->INHERITED::onQuery(evt);
+            return false;
     }
 
     void onSizeChange() override {
@@ -188,11 +185,11 @@ protected:
         fScene->render(canvas);
     }
 
-    bool onAnimate(const AnimTimer& timer) override {
+    bool onAnimate(double nanos) override {
         // onAnimate may fire before the first draw.
         if (fScene) {
-            SkScalar dt = (timer.msec() - fLastTick) * fTimeScale;
-            fLastTick = timer.msec();
+            SkScalar dt = (TimeUtils::NanosToMSec(nanos) - fLastTick) * fTimeScale;
+            fLastTick = TimeUtils::NanosToMSec(nanos);
 
             fPaddle0.posTick(dt);
             fPaddle1.posTick(dt);

@@ -70,9 +70,7 @@ public:
 protected:
     SkString name() override { return SkString("Lua"); }
 
-    bool onQuery(Sample::Event* evt) override {
-        SkUnichar uni;
-        if (Sample::CharQ(*evt, &uni)) {
+    bool onChar(SkUnichar uni) override {
             lua_State* L = this->ensureLua();
             lua_getglobal(L, gUnicharName);
             if (lua_isfunction(L, -1)) {
@@ -87,8 +85,7 @@ protected:
                     }
                 }
             }
-        }
-        return this->INHERITED::onQuery(evt);
+            return false;
     }
 
     void onDrawContent(SkCanvas* canvas) override {
@@ -112,7 +109,7 @@ protected:
     }
 
     virtual Sample::Click* onFindClickHandler(SkScalar x, SkScalar y,
-                                              unsigned modi) override {
+                                              ModifierKey modi) override {
         lua_State* L = this->ensureLua();
         lua_getglobal(L, gClickName);
         if (lua_isfunction(L, -1)) {
@@ -123,7 +120,7 @@ protected:
                 SkDebugf("lua err: %s\n", lua_tostring(L, -1));
             } else {
                 if (lua_isboolean(L, -1) && lua_toboolean(L, -1)) {
-                    return new Click(this);
+                    return new Click();
                 }
             }
         }
@@ -133,10 +130,10 @@ protected:
     bool onClick(Click* click) override {
         const char* state = nullptr;
         switch (click->fState) {
-            case Click::kMoved_State:
+            case InputState::kMove:
                 state = "moved";
                 break;
-            case Click::kUp_State:
+            case InputState::kUp:
                 state = "up";
                 break;
             default:

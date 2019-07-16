@@ -28,24 +28,24 @@ public:
 
     bool isFormatSRGB(const GrBackendFormat& format) const override;
 
-    bool isFormatTexturable(SkColorType, const GrBackendFormat&) const override;
+    bool isFormatTexturable(GrColorType, const GrBackendFormat&) const override;
 
     bool isConfigTexturable(GrPixelConfig config) const override {
         return SkToBool(fConfigTable[config].fFlags & ConfigInfo::kTextureable_Flag);
     }
 
     int getRenderTargetSampleCount(int requestedCount,
-                                   SkColorType, const GrBackendFormat&) const override;
+                                   GrColorType, const GrBackendFormat&) const override;
     int getRenderTargetSampleCount(int requestedCount, GrPixelConfig) const override;
 
-    int maxRenderTargetSampleCount(SkColorType, const GrBackendFormat&) const override;
+    int maxRenderTargetSampleCount(GrColorType, const GrBackendFormat&) const override;
     int maxRenderTargetSampleCount(GrPixelConfig) const override;
 
     SurfaceReadPixelsSupport surfaceSupportsReadPixels(const GrSurface*) const override {
         return SurfaceReadPixelsSupport::kSupported;
     }
 
-    bool isFormatCopyable(SkColorType, const GrBackendFormat&) const override { return true; }
+    bool isFormatCopyable(GrColorType, const GrBackendFormat&) const override { return true; }
     bool isConfigCopyable(GrPixelConfig) const override { return true; }
 
     /**
@@ -59,6 +59,9 @@ public:
                        int srcSampleCount, const SkIRect& srcRect, const SkIPoint& dstPoint,
                        bool areDstSrcSameObj) const;
 
+    bool canCopyAsResolve(GrSurface* dst, int dstSampleCount, GrSurface* src, int srcSampleCount,
+                          const SkIRect& srcRect, const SkIPoint& dstPoint) const;
+
     bool initDescForDstCopy(const GrRenderTargetProxy* src, GrSurfaceDesc* desc,
                             bool* rectsMustMatch, bool* disallowSubrect) const override {
         return false;
@@ -67,14 +70,9 @@ public:
     GrPixelConfig validateBackendRenderTarget(const GrBackendRenderTarget&,
                                               GrColorType) const override;
 
-    bool areColorTypeAndFormatCompatible(GrColorType, const GrBackendFormat&) const override;
-
-    GrPixelConfig getConfigFromBackendFormat(const GrBackendFormat&, GrColorType) const override;
-
     GrPixelConfig getYUVAConfigFromBackendFormat(const GrBackendFormat&) const override;
 
-    GrBackendFormat getBackendFormatFromGrColorType(GrColorType ct,
-                                                    GrSRGBEncoded srgbEncoded) const override;
+    GrBackendFormat getBackendFormatFromColorType(GrColorType ct) const override;
     GrBackendFormat getBackendFormatFromCompressionType(SkImage::CompressionType) const override;
 
     GrSwizzle getTextureSwizzle(const GrBackendFormat&, GrColorType) const override;
@@ -97,6 +95,8 @@ private:
         // Transfer buffers not yet supported.
         return 0;
     }
+    GrPixelConfig onGetConfigFromBackendFormat(const GrBackendFormat&, GrColorType) const override;
+    bool onAreColorTypeAndFormatCompatible(GrColorType, const GrBackendFormat&) const override;
 
     struct ConfigInfo {
         ConfigInfo() : fFlags(0) {}
@@ -107,9 +107,8 @@ private:
             kMSAA_Flag        = 0x4,
             kResolve_Flag     = 0x8,
         };
-        // TODO: Put kMSAA_Flag back when MSAA is implemented
         static const uint16_t kAllFlags = kTextureable_Flag | kRenderable_Flag |
-                                          /*kMSAA_Flag |*/ kResolve_Flag;
+                                          kMSAA_Flag | kResolve_Flag;
 
         uint16_t fFlags;
     };

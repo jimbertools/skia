@@ -47,9 +47,9 @@ namespace skvm {
     Program Builder::done() const {
         // Track per-instruction code hoisting, lifetime, and register assignment.
         struct Analysis {
-            bool hoist = true;
-            Val  life  = NA;
-            Reg  reg   = 0;
+            bool hoist = true;  // Can this instruction be hoisted outside the implicit loop?
+            Val  death = 0;     // This instruction's value is needed until instruction 'death'.
+            Reg  reg   = 0;     // Register this instruction's output is assigned to.
         };
         std::vector<Analysis> analysis(fProgram.size());
 
@@ -59,14 +59,14 @@ namespace skvm {
 
             // All side-effect-only instructions (stores) are live.
             if (inst.op <= Op::store32) {
-                analysis[id].life = id;
+                analysis[id].death = id;
             }
-            // The arguments of a live instruction must live until that instruction.
-            if (analysis[id].life != NA) {
-                // Notice how we're walking backward, storing the latest instruction in life.
-                if (inst.x != NA && analysis[inst.x].life == NA) { analysis[inst.x].life = id; }
-                if (inst.y != NA && analysis[inst.y].life == NA) { analysis[inst.y].life = id; }
-                if (inst.z != NA && analysis[inst.z].life == NA) { analysis[inst.z].life = id; }
+            // The arguments of a live instruction must live until at least that instruction.
+            if (analysis[id].death != 0) {
+                // Notice how we're walking backward, storing the latest instruction in death.
+                if (inst.x != NA && analysis[inst.x].death == 0) { analysis[inst.x].death = id; }
+                if (inst.y != NA && analysis[inst.y].death == 0) { analysis[inst.y].death = id; }
+                if (inst.z != NA && analysis[inst.z].death == 0) { analysis[inst.z].death = id; }
             }
         }
 
@@ -86,10 +86,10 @@ namespace skvm {
                 if (inst.z != NA) { analysis[id].hoist &= analysis[inst.z].hoist; }
             }
 
-            // Mark the lifetime of live hoisted instructions as the full program,
-            // mostly to avoid recycling their registers, and also helps debugging sanity.
-            if (analysis[id].hoist && analysis[id].life != NA) {
-                analysis[id].life = (Val)fProgram.size();
+            // Extend the lifetime of live hoisted instructions to the full program,
+            // mostly to avoid recycling their registers (and also helps debugging).
+            if (analysis[id].hoist && analysis[id].death != 0) {
+                analysis[id].death = (Val)fProgram.size();
             }
         }
 
@@ -98,7 +98,7 @@ namespace skvm {
 
         // Our first pass of register assignment assigns hoisted values to eternal registers.
         for (Val id = 0; id < (Val)fProgram.size(); id++) {
-            if (analysis[id].life == NA || !analysis[id].hoist) {
+            if (analysis[id].death == 0 || !analysis[id].hoist) {
                 continue;
             }
             // Hoisted values are needed forever, so they each get their own register.
@@ -110,7 +110,7 @@ namespace skvm {
         std::vector<Reg> avail;
         for (Val id = 0; id < (Val)fProgram.size(); id++) {
             const Instruction& inst = fProgram[id];
-            if (analysis[id].life == NA || analysis[id].hoist) {
+            if (analysis[id].death == 0 || analysis[id].hoist) {
                 continue;
             }
 
@@ -118,7 +118,7 @@ namespace skvm {
             auto maybe_recycle_register = [&](Val input) {
                 // If this is a real input and it's lifetime ends with this
                 // instruction, we can recycle the register it's occupying.
-                if (input != NA && analysis[input].life == id) {
+                if (input != NA && analysis[input].death == id) {
                     avail.push_back(analysis[input].reg);
                 }
             };
@@ -166,7 +166,7 @@ namespace skvm {
 
         for (Val id = 0; id < (Val)fProgram.size(); id++) {
             const Instruction& inst = fProgram[id];
-            if (analysis[id].life == NA || !analysis[id].hoist) {
+            if (analysis[id].death == 0 || !analysis[id].hoist) {
                 continue;
             }
 
@@ -175,7 +175,7 @@ namespace skvm {
         }
         for (Val id = 0; id < (Val)fProgram.size(); id++) {
             const Instruction& inst = fProgram[id];
-            if (analysis[id].life == NA || analysis[id].hoist) {
+            if (analysis[id].death == 0 || analysis[id].hoist) {
                 continue;
             }
 
@@ -378,14 +378,14 @@ namespace skvm {
         return vex;
     }
 
-    Assembler::Assembler(void* buf) : fCode((uint8_t*)buf), fSize(0) {}
+    Assembler::Assembler(void* buf) : fCode((uint8_t*)buf), fCurr(fCode), fSize(0) {}
 
     size_t Assembler::size() const { return fSize; }
 
     void Assembler::byte(const void* p, int n) {
-        if (fCode) {
-            memcpy(fCode, p, n);
-            fCode += n;
+        if (fCurr) {
+            memcpy(fCurr, p, n);
+            fCurr += n;
         }
         fSize += n;
     }
@@ -420,7 +420,7 @@ namespace skvm {
             opcode |= 0b0000'0010;  // second bit set for 8-bit immediate, else 32-bit.
         }
 
-        this->byte(rex(1,dst>>3,0,0));
+        this->byte(rex(1,0,0,dst>>3));
         this->byte(opcode);
         this->byte(mod_rm(Mod::Direct, opcode_ext, dst&7));
         this->byte(&imm, imm_bytes);
@@ -428,6 +428,7 @@ namespace skvm {
 
     void Assembler::add(GP64 dst, int imm) { this->op(0,0b000, dst,imm); }
     void Assembler::sub(GP64 dst, int imm) { this->op(0,0b101, dst,imm); }
+    void Assembler::cmp(GP64 reg, int imm) { this->op(0,0b111, reg,imm); }
 
     void Assembler::op(int prefix, int map, int opcode, Ymm dst, Ymm x, Ymm y, bool W/*=false*/) {
         VEX v = vex(W, dst>>3, 0, y>>3,
@@ -487,10 +488,28 @@ namespace skvm {
     void Assembler::vcvttps2dq(Ymm dst, Ymm x) { this->op(0xf3,0x0f,0x5b, dst,x); }
 
     Assembler::Label Assembler::here() {
-        return { (int)this->size() };
+        return { (int)this->size(), Label::None, {} };
     }
 
-    void Assembler::op(int prefix, int map, int opcode, Ymm dst, Ymm x, Label l) {
+    int Assembler::disp19(Label* l) {
+        SkASSERT(l->kind == Label::None ||
+                 l->kind == Label::ARMDisp19);
+        l->kind = Label::ARMDisp19;
+        l->references.push_back(here().offset);
+        // ARM 19-bit instruction count, from the beginning of this instruction.
+        return (l->offset - here().offset) / 4;
+    }
+
+    int Assembler::disp32(Label* l) {
+        SkASSERT(l->kind == Label::None ||
+                 l->kind == Label::X86Disp32);
+        l->kind = Label::X86Disp32;
+        l->references.push_back(here().offset);
+        // x86 32-bit byte count, from the end of this instruction.
+        return l->offset - (here().offset + 4);
+    }
+
+    void Assembler::op(int prefix, int map, int opcode, Ymm dst, Ymm x, Label* l) {
         // IP-relative addressing uses Mod::Indirect with the R/M encoded as-if rbp or r13.
         const int rip = rbp;
 
@@ -499,31 +518,29 @@ namespace skvm {
         this->byte(v.bytes, v.len);
         this->byte(opcode);
         this->byte(mod_rm(Mod::Indirect, dst&7, rip&7));
-
-        // IP relative addresses are relative to IP _after_ this instruction.
-        int imm = l.offset - (here().offset + 4);
-        this->byte(&imm, 4);
+        this->word(this->disp32(l));
     }
 
-    void Assembler::vbroadcastss(Ymm dst, Label l) { this->op(0x66,0x380f,0x18, dst,l); }
+    void Assembler::vbroadcastss(Ymm dst, Label* l) { this->op(0x66,0x380f,0x18, dst,l); }
 
-    void Assembler::vpshufb(Ymm dst, Ymm x, Label l) { this->op(0x66,0x380f,0x00, dst,x,l); }
+    void Assembler::vpshufb(Ymm dst, Ymm x, Label* l) { this->op(0x66,0x380f,0x00, dst,x,l); }
 
-    void Assembler::jne(Label l) {
-        // jne can be either 2 bytes (short) or 6 bytes (near):
-        //    75     one-byte-disp
-        //    0F 85 four-byte-disp
-        // As usual, all displacements relative to the end of this instruction.
-        int shrt = l.offset - (here().offset + 2),
-            near = l.offset - (here().offset + 6);
+    void Assembler::jump(uint8_t condition, Label* l) {
+        // These conditional jumps can be either 2 bytes (short) or 6 bytes (near):
+        //    7?     one-byte-disp
+        //    0F 8? four-byte-disp
+        // We always use the near displacement to make updating labels simpler (no resizing).
+        this->byte(0x0f, condition);
+        this->word(this->disp32(l));
+    }
+    void Assembler::je (Label* l) { this->jump(0x84, l); }
+    void Assembler::jne(Label* l) { this->jump(0x85, l); }
+    void Assembler::jl (Label* l) { this->jump(0x8c, l); }
 
-        if (SkTFitsIn<int8_t>(shrt)) {
-            this->byte(0x75);
-            this->byte(&shrt, 1);
-        } else {
-            this->byte(0x0f, 0x85);
-            this->byte(&near, 4);
-        }
+    void Assembler::jmp(Label* l) {
+        // Like above in jump(), we could use 8-bit displacement here, but always use 32-bit.
+        this->byte(0xe9);
+        this->word(this->disp32(l));
     }
 
     void Assembler::load_store(int prefix, int map, int opcode, Ymm ymm, GP64 ptr) {
@@ -537,7 +554,8 @@ namespace skvm {
     void Assembler::vmovups  (Ymm dst, GP64 src) { this->load_store(0   ,  0x0f,0x10, dst,src); }
     void Assembler::vpmovzxbd(Ymm dst, GP64 src) { this->load_store(0x66,0x380f,0x31, dst,src); }
     void Assembler::vmovups  (GP64 dst, Ymm src) { this->load_store(0   ,  0x0f,0x11, src,dst); }
-    void Assembler::vmovq    (GP64 dst, Xmm src) {
+
+    void Assembler::vmovq(GP64 dst, Xmm src) {
         int prefix = 0x66,
             map    = 0x0f,
             opcode = 0xd6;
@@ -546,6 +564,92 @@ namespace skvm {
         this->byte(v.bytes, v.len);
         this->byte(opcode);
         this->byte(mod_rm(Mod::Indirect, src&7, dst&7));
+    }
+
+    void Assembler::vmovd(GP64 dst, Xmm src) {
+        int prefix = 0x66,
+            map    = 0x0f,
+            opcode = 0x7e;
+        VEX v = vex(0, src>>3, 0, dst>>3,
+                    map, 0, /*ymm?*/0, prefix);
+        this->byte(v.bytes, v.len);
+        this->byte(opcode);
+        this->byte(mod_rm(Mod::Indirect, src&7, dst&7));
+    }
+
+    void Assembler::vmovd_direct(GP64 dst, Xmm src) {
+        int prefix = 0x66,
+            map    = 0x0f,
+            opcode = 0x7e;
+        VEX v = vex(0, src>>3, 0, dst>>3,
+                    map, 0, /*ymm?*/0, prefix);
+        this->byte(v.bytes, v.len);
+        this->byte(opcode);
+        this->byte(mod_rm(Mod::Direct, src&7, dst&7));
+    }
+
+    void Assembler::vmovd(Xmm dst, GP64 src) {
+        int prefix = 0x66,
+            map    = 0x0f,
+            opcode = 0x6e;
+        VEX v = vex(0, dst>>3, 0, src>>3,
+                    map, 0, /*ymm?*/0, prefix);
+        this->byte(v.bytes, v.len);
+        this->byte(opcode);
+        this->byte(mod_rm(Mod::Indirect, dst&7, src&7));
+    }
+
+    void Assembler::vmovd_direct(Xmm dst, GP64 src) {
+        int prefix = 0x66,
+            map    = 0x0f,
+            opcode = 0x6e;
+        VEX v = vex(0, dst>>3, 0, src>>3,
+                    map, 0, /*ymm?*/0, prefix);
+        this->byte(v.bytes, v.len);
+        this->byte(opcode);
+        this->byte(mod_rm(Mod::Direct, dst&7, src&7));
+    }
+
+    void Assembler::movzbl(GP64 dst, GP64 src) {
+        if ((dst>>3) || (src>>3)) {
+            this->byte(rex(0,dst>>3,0,src>>3));
+        }
+        this->byte(0x0f, 0xb6);
+        this->byte(mod_rm(Mod::Indirect, dst&7, src&7));
+    }
+
+
+    void Assembler::movb(GP64 dst, GP64 src) {
+        if ((dst>>3) || (src>>3)) {
+            this->byte(rex(0,src>>3,0,dst>>3));
+        }
+        this->byte(0x88);
+        this->byte(mod_rm(Mod::Indirect, src&7, dst&7));
+    }
+
+    void Assembler::vpinsrb(Xmm dst, Xmm src, GP64 ptr, int imm) {
+        int prefix = 0x66,
+            map    = 0x3a0f,
+            opcode = 0x20;
+        VEX v = vex(0, dst>>3, 0, ptr>>3,
+                    map, src, /*ymm?*/0, prefix);
+        this->byte(v.bytes, v.len);
+        this->byte(opcode);
+        this->byte(mod_rm(Mod::Indirect, dst&7, ptr&7));
+        this->byte(imm);
+    }
+
+    void Assembler::vpextrb(GP64 ptr, Xmm src, int imm) {
+        int prefix = 0x66,
+            map    = 0x3a0f,
+            opcode = 0x14;
+
+        VEX v = vex(0, src>>3, 0, ptr>>3,
+                    map, 0, /*ymm?*/0, prefix);
+        this->byte(v.bytes, v.len);
+        this->byte(opcode);
+        this->byte(mod_rm(Mod::Indirect, src&7, ptr&7));
+        this->byte(imm);
     }
 
     void Assembler::word(uint32_t w) {
@@ -625,6 +729,12 @@ namespace skvm {
                   | (n     &  5_mask) <<  5
                   | (d     &  5_mask) <<  0);
     }
+    void Assembler::sub(X d, X n, int imm12) {
+        this->word( 0b1'1'0'10001'00  << 22
+                  | (imm12 & 12_mask) << 10
+                  | (n     &  5_mask) <<  5
+                  | (d     &  5_mask) <<  0);
+    }
     void Assembler::subs(X d, X n, int imm12) {
         this->word( 0b1'1'1'10001'00  << 22
                   | (imm12 & 12_mask) << 10
@@ -632,25 +742,78 @@ namespace skvm {
                   | (d     &  5_mask) <<  0);
     }
 
-    void Assembler::bne(Label l) {
-        // Jump in insts from before this one.
-        const int imm19 = (l.offset - here().offset) / 4;
-        this->word( 0b0101010'0       << 24
+    void Assembler::b(Condition cond, Label* l) {
+        const int imm19 = this->disp19(l);
+        this->word( 0b0101010'0           << 24
+                  | (imm19     & 19_mask) <<  5
+                  | ((int)cond &  4_mask) <<  0);
+    }
+    void Assembler::cbz(X t, Label* l) {
+        const int imm19 = this->disp19(l);
+        this->word( 0b1'011010'0      << 24
                   | (imm19 & 19_mask) <<  5
-                  | 0b0'0001          <<  0);
+                  | (t     &  5_mask) <<  0);
+    }
+    void Assembler::cbnz(X t, Label* l) {
+        const int imm19 = this->disp19(l);
+        this->word( 0b1'011010'1      << 24
+                  | (imm19 & 19_mask) <<  5
+                  | (t     &  5_mask) <<  0);
     }
 
     void Assembler::ldrq(V dst, X src) { this->op(0b00'111'1'01'11'000000000000, src, dst); }
     void Assembler::ldrs(V dst, X src) { this->op(0b10'111'1'01'01'000000000000, src, dst); }
+    void Assembler::ldrb(V dst, X src) { this->op(0b00'111'1'01'01'000000000000, src, dst); }
 
     void Assembler::strq(V src, X dst) { this->op(0b00'111'1'01'10'000000000000, dst, src); }
     void Assembler::strs(V src, X dst) { this->op(0b10'111'1'01'00'000000000000, dst, src); }
+    void Assembler::strb(V src, X dst) { this->op(0b00'111'1'01'00'000000000000, dst, src); }
 
-    void Assembler::ldrq(V dst, Label l) {
-        const int imm19 = (l.offset - here().offset) / 4;
+    void Assembler::ldrq(V dst, Label* l) {
+        const int imm19 = this->disp19(l);
         this->word( 0b10'011'1'00     << 24
                   | (imm19 & 19_mask) << 5
                   | (dst   &  5_mask) << 0);
+    }
+
+    void Assembler::label(Label* l) {
+        if (fCode) {
+            // The instructions all currently point to l->offset.
+            // We'll want to add a delta to point them to here().
+            int delta = here().offset - l->offset;
+            l->offset = here().offset;
+
+            if (l->kind == Label::ARMDisp19) {
+                for (int ref : l->references) {
+                    // ref points to a 32-bit instruction with 19-bit displacement in instructions.
+                    uint32_t inst;
+                    memcpy(&inst, fCode + ref, 4);
+
+                    // [ 8 bits to preserve] [ 19 bit signed displacement ] [ 5 bits to preserve ]
+                    int disp = (int)(inst << 8) >> 13;
+
+                    disp += delta/4;  // delta is in bytes, we want instructions.
+
+                    // Put it all back together, preserving the high 8 bits and low 5.
+                    inst = ((disp << 5) &  (19_mask << 5))
+                         | ((inst     ) & ~(19_mask << 5));
+
+                    memcpy(fCode + ref, &inst, 4);
+                }
+            }
+
+            if (l->kind == Label::X86Disp32) {
+                for (int ref : l->references) {
+                    // ref points to a 32-bit displacement in bytes.
+                    int disp;
+                    memcpy(&disp, fCode + ref, 4);
+
+                    disp += delta;
+
+                    memcpy(fCode + ref, &disp, 4);
+                }
+            }
+        }
     }
 
 #if defined(SKVM_JIT)
@@ -704,7 +867,7 @@ namespace skvm {
 
     // Returns stride of the JIT, currently always 8.
     #if defined(__x86_64__)
-    static int jit(Assembler& a, size_t* code,
+    static void jit(Assembler& a, size_t* code,
                    const std::vector<Program::Instruction>& instructions,
                    int regs, int loop, size_t strides[], int nargs) {
         using A = Assembler;
@@ -776,12 +939,37 @@ namespace skvm {
         // Executable code starts here.
         *code = a.size();
 
-        A::Label loop_label;
-        for (int i = 0; i < (int)instructions.size(); i++) {
-            if (i == loop) {
-                loop_label = a.here();
-            }
-            const Program::Instruction& inst = instructions[i];
+        // Our program runs a 8-at-a-time body loop, then a 1-at-at-time tail loop to
+        // handle all N values, with an overall layout looking like
+        //
+        // buf:   ...
+        //        data for splats and vpshufb
+        //        ...
+        //
+        // code:  ...
+        //        hoisted instructions
+        //        ...
+        //
+        // body:  cmp N,8       # if (n < 8)
+        //        jl tail       #    goto tail
+        //        ...
+        //        instructions handling 8 at a time
+        //        ...
+        //        sub N,8
+        //        jmp body
+        //
+        // tail:  cmp N,0    # if (n == 0)
+        //        je done    #     goto done
+        //        ...
+        //        instructions handling 1 at a time
+        //        ...
+        //        sub N,1
+        //        jmp tail
+        //
+        // done:  vzeroupper
+        //        ret
+
+        auto emit = [&](const Program::Instruction& inst, bool scalar) {
             Op  op = inst.op;
 
             Reg   d = inst.d,
@@ -796,19 +984,30 @@ namespace skvm {
                 // to overwrite your arguments before you're done using them!
 
                 case Op::store8:
-                    // TODO: if SkCpu::Supports(SkCpu::SKX) { a.vpmovusdb(arg[imm], ar(x)) }
-                    a.vpackusdw(r(tmp), r(x), r(x));      // pack 32-bit -> 16-bit
-                    a.vpermq   (r(tmp), r(tmp), 0xd8);     // u64 tmp[0,1,2,3] = tmp[0,2,1,3]
-                    a.vpackuswb(r(tmp), r(tmp), r(tmp));  // pack 16-bit -> 8-bit
-                    a.vmovq    (arg[imm], (A::Xmm)tmp);    // store low 8 bytes
-                    break;
+                    if (scalar) {
+                        a.vpextrb(arg[imm], (A::Xmm)r(x), 0);
+                    } else {
+                        // TODO: if SkCpu::Supports(SkCpu::SKX) { a.vpmovusdb(arg[imm], ar(x)) }
+                        a.vpackusdw(r(tmp), r(x), r(x));      // pack 32-bit -> 16-bit
+                        a.vpermq   (r(tmp), r(tmp), 0xd8);    // u64 tmp[0,1,2,3] = tmp[0,2,1,3]
+                        a.vpackuswb(r(tmp), r(tmp), r(tmp));  // pack 16-bit -> 8-bit
+                        a.vmovq    (arg[imm], (A::Xmm)tmp);   // store low 8 bytes
+                    } break;
 
-                case Op::store32: a.vmovups(arg[imm], r(x)); break;
+                case Op::store32: if (scalar) { a.vmovd  (arg[imm], (A::Xmm)r(x)); }
+                                  else        { a.vmovups(arg[imm],         r(x)); } break;
 
-                case Op::load8:  a.vpmovzxbd(r(d), arg[imm]); break;
-                case Op::load32: a.vmovups  (r(d), arg[imm]); break;
+                case Op::load8:  if (scalar) {
+                                     a.vpxor(r(d), r(d), r(d));
+                                     a.vpinsrb( (A::Xmm)r(d), (A::Xmm)r(d), arg[imm], 0);
+                                 } else {
+                                     a.vpmovzxbd(r(d), arg[imm]);
+                                 } break;
 
-                case Op::splat: a.vbroadcastss(r(d), *splats.find(imm)); break;
+                case Op::load32: if (scalar) { a.vmovd  ((A::Xmm)r(d), arg[imm]); }
+                                 else        { a.vmovups(        r(d), arg[imm]); } break;
+
+                case Op::splat: a.vbroadcastss(r(d), splats.find(imm)); break;
 
                 case Op::add_f32: a.vaddps(r(d), r(x), r(y)); break;
                 case Op::sub_f32: a.vsubps(r(d), r(x), r(y)); break;
@@ -854,26 +1053,54 @@ namespace skvm {
                 case Op::to_f32: a.vcvtdq2ps (r(d), r(x)); break;
                 case Op::to_i32: a.vcvttps2dq(r(d), r(x)); break;
 
-                case Op::bytes: a.vpshufb(r(d), r(x), *vpshufb_masks.find(imm)); break;
+                case Op::bytes: a.vpshufb(r(d), r(x), vpshufb_masks.find(imm)); break;
             }
+        };
+
+        A::Label body,
+                 tail,
+                 done;
+
+        // Hoisted instructions.
+        for (int i = 0; i < loop; i++) {
+            emit(instructions[i], /*scalar=*/false);
         }
 
+        // Body 8-at-a-time loop.
+    a.label(&body);
+        a.cmp(N, K);
+        a.jl(&tail);
+        for (int i = loop; i < (int)instructions.size(); i++) {
+            emit(instructions[i], /*scalar=*/false);
+        }
         for (int i = 0; i < nargs; i++) {
             a.add(arg[i], K*(int)strides[i]);
         }
         a.sub(N, K);
-        a.jne(loop_label);
+        a.jmp(&body);
 
+        // Tail 1-at-a-time loop.
+    a.label(&tail);
+        a.cmp(N, 0);
+        a.je(&done);
+        for (int i = loop; i < (int)instructions.size(); i++) {
+            emit(instructions[i], /*scalar=*/true);
+        }
+        for (int i = 0; i < nargs; i++) {
+            a.add(arg[i], 1*(int)strides[i]);
+        }
+        a.sub(N, 1);
+        a.jmp(&tail);
+
+    a.label(&done);
         a.vzeroupper();
         a.ret();
-
-        // Return mask to apply to N for elements the JIT can handle.
-        return ~(K-1);
     }
+
     #elif defined(__aarch64__)
-    static int jit(Assembler& a, size_t* code,
-                   const std::vector<Program::Instruction>& instructions,
-                   int regs, int loop, size_t strides[], int nargs) {
+    static void jit(Assembler& a, size_t* code,
+                    const std::vector<Program::Instruction>& instructions,
+                    int regs, int loop, size_t strides[], int nargs) {
         using A = Assembler;
         SkASSERT(can_jit(regs,nargs));
 
@@ -917,12 +1144,35 @@ namespace skvm {
 
         *code = a.size();
 
-        A::Label loop_label;
-        for (int i = 0; i < (int)instructions.size(); i++) {
-            if (i == loop) {
-                loop_label = a.here();
-            }
-            const Program::Instruction& inst = instructions[i];
+        // Our program runs a 4-at-a-time body loop, then a 1-at-at-time tail loop to
+        // handle all N values, with an overall layout looking like
+        //
+        // buf:   ...
+        //        data for splats and tbl
+        //        ...
+        //
+        // code:  ...
+        //        hoisted instructions
+        //        ...
+        //
+        // body:  cmp N,4       # if (n < 4)
+        //        b.lt tail     #    goto tail
+        //        ...
+        //        instructions handling 4 at a time
+        //        ...
+        //        sub N,4
+        //        b body
+        //
+        // tail:  cbz N,done    # if (n == 0) goto done
+        //        ...
+        //        instructions handling 1 at a time
+        //        ...
+        //        sub N,1
+        //        b tail
+        //
+        // done:  ret
+
+        auto emit = [&](const Program::Instruction& inst, bool scalar) {
             Op  op = inst.op;
 
             Reg   d = inst.d,
@@ -933,17 +1183,26 @@ namespace skvm {
             switch (op) {
                 case Op::store8: a.xtns2h(r(tmp), r(x));
                                  a.xtnh2b(r(tmp), r(tmp));
-                                 a.strs  (r(tmp), arg[imm]);
+                   if (scalar) { a.strb  (r(tmp), arg[imm]); }
+                   else        { a.strs  (r(tmp), arg[imm]); }
                                  break;
-                case Op::store32: a.strq(r(x), arg[imm]); break;
+                case Op::store32:
+                   if (scalar) { a.strs(r(x), arg[imm]); }
+                   else        { a.strq(r(x), arg[imm]); }
+                                 break;
 
-                case Op::load8: a.ldrs   (r(tmp), arg[imm]);
-                                a.uxtlb2h(r(tmp), r(tmp));
-                                a.uxtlh2s(r(d)  , r(tmp));
-                                break;
-                case Op::load32: a.ldrq(r(d), arg[imm]); break;
+                case Op::load8:
+                   if (scalar) { a.ldrb   (r(tmp), arg[imm]); }
+                   else        { a.ldrs   (r(tmp), arg[imm]); }
+                                 a.uxtlb2h(r(tmp), r(tmp));
+                                 a.uxtlh2s(r(d)  , r(tmp));
+                                 break;
+                case Op::load32:
+                   if (scalar) { a.ldrs(r(d), arg[imm]); }
+                   else        { a.ldrq(r(d), arg[imm]); }
+                                 break;
 
-                case Op::splat: a.ldrq(r(d), *splats.find(imm)); break;
+                case Op::splat: a.ldrq(r(d), splats.find(imm)); break;
 
                 case Op::add_f32: a.fadd4s(r(d), r(x), r(y)); break;
                 case Op::sub_f32: a.fsub4s(r(d), r(x), r(y)); break;
@@ -990,28 +1249,48 @@ namespace skvm {
                 case Op::to_f32: a.scvtf4s (r(d), r(x)); break;
                 case Op::to_i32: a.fcvtzs4s(r(d), r(x)); break;
 
-                case Op::bytes: a.ldrq(r(tmp), *tbl_masks.find(imm));  // TODO: hoist instead of tmp
+                case Op::bytes: a.ldrq(r(tmp), tbl_masks.find(imm));  // TODO: hoist instead of tmp
                                 a.tbl (r(d), r(x), r(tmp));
                                 break;
             }
+        };
+
+        A::Label body,
+                 tail,
+                 done;
+
+        // Hoisted instructions.
+        for (int i = 0; i < loop; i++) {
+            emit(instructions[i], /*scalar=*/false);
         }
 
+        // Body 4-at-a-time loop.
+    a.label(&body);
+        a.cmp(N, K);
+        a.blt(&tail);
+        for (int i = loop; i < (int)instructions.size(); i++) {
+            emit(instructions[i], /*scalar=*/false);
+        }
         for (int i = 0; i < nargs; i++) {
             a.add(arg[i], arg[i], K*(int)strides[i]);
         }
-        a.subs(N, N, K);
-        a.bne(loop_label);
+        a.sub(N, N, K);
+        a.b(&body);
+
+        // Tail 1-at-a-time loop.
+    a.label(&tail);
+        a.cbz(N, &done);
+        for (int i = loop; i < (int)instructions.size(); i++) {
+            emit(instructions[i], /*scalar=*/true);
+        }
+        for (int i = 0; i < nargs; i++) {
+            a.add(arg[i], arg[i], 1*(int)strides[i]);
+        }
+        a.sub(N, N, 1);
+        a.b(&tail);
+
+    a.label(&done);
         a.ret(A::x30);
-
-        return ~(K-1);
-    }
-
-    #else  // not x86-64 or aarch64
-    static int jit(Assembler& a, size_t* code,
-                   const std::vector<Program::Instruction>& instructions,
-                   int regs, int loop, size_t strides[], int nargs) {
-        *code = 0;
-        return 0;
     }
     #endif
 
@@ -1026,7 +1305,6 @@ namespace skvm {
 
     void Program::eval(int n, void* args[], size_t strides[], int nargs) const {
         void (*entry)() = nullptr;
-        int    mask     = 0;
 
     #if defined(SKVM_JIT)
         // If we can't grab this lock, another thread is probably assembling the program.
@@ -1035,12 +1313,11 @@ namespace skvm {
             if (fJIT.entry) {
                 // Use cached program.
                 entry = fJIT.entry;
-                mask  = fJIT.mask;
             } else if (can_jit(fRegs, nargs)) {
                 // First assemble without any buffer to see how much memory we need to mmap.
                 size_t code;
                 Assembler a{nullptr};
-                mask = jit(a, &code, fInstructions, fRegs, fLoop, strides, nargs);
+                jit(a, &code, fInstructions, fRegs, fLoop, strides, nargs);
 
                 // mprotect() can only change at a page level granularity, so round a.size() up.
                 size_t page = sysconf(_SC_PAGESIZE),                           // Probably 4096.
@@ -1050,7 +1327,7 @@ namespace skvm {
                     mmap(nullptr, size, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1,0);
 
                 a = Assembler{buf};
-                mask = jit(a,&code, fInstructions, fRegs, fLoop, strides, nargs);
+                jit(a,&code, fInstructions, fRegs, fLoop, strides, nargs);
 
                 mprotect(buf,size, PROT_READ|PROT_EXEC);
             #if defined(__aarch64__)
@@ -1061,7 +1338,6 @@ namespace skvm {
                 fJIT.buf   = buf;
                 fJIT.size  = size;
                 fJIT.entry = entry;
-                fJIT.mask  = mask;
 
 
             #if 0 || defined(SKVM_PERF_DUMPS) // Debug dumps for perf.
@@ -1072,7 +1348,7 @@ namespace skvm {
                         if (i % 4 == 0) {
                             SkDebugf("\n");
                             if (i == (int)code) {
-                                SkDebugf("loop:\n");
+                                SkDebugf("code:\n");
                             }
                         }
                         SkDebugf("0x%02x ", *cur++);
@@ -1191,30 +1467,14 @@ namespace skvm {
         }
     #endif  // defined(SKVM_JIT)
 
-        if (const int jitN = n & mask) {
-            SkASSERT(entry);
-            bool ran = true;
-
+        if (entry) {
             switch (nargs) {
-                case 0: ((void(*)(int              ))entry)(jitN                  ); break;
-                case 1: ((void(*)(int, void*       ))entry)(jitN, args[0]         ); break;
-                case 2: ((void(*)(int, void*, void*))entry)(jitN, args[0], args[1]); break;
-                default: ran = false; break;
+                case 0: ((void(*)(int              ))entry)(n                  ); break;
+                case 1: ((void(*)(int, void*       ))entry)(n, args[0]         ); break;
+                case 2: ((void(*)(int, void*, void*))entry)(n, args[0], args[1]); break;
+                default: SkUNREACHABLE;  // TODO
             }
-            if (ran) {
-                // Step n and arguments forward to where the JIT stopped.
-                n -= jitN;
-
-                void**        arg    = args;
-                const size_t* stride = strides;
-                for (; *arg; arg++, stride++) {
-                    *arg = (void*)( (char*)*arg + jitN * *stride );
-                }
-                SkASSERT(arg == args + nargs);
-            }
-        }
-
-        if (n) {
+        } else {
             // We'll operate in SIMT style, knocking off K-size chunks from n while possible.
             constexpr int K = 16;
             using I32 = skvx::Vec<K, int>;

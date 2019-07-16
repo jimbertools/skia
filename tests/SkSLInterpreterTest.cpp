@@ -297,9 +297,6 @@ DEF_TEST(SkSLInterpreterTernary, r) {
          0, 1, 2, 0, 2, 1, 2, 0);
     test(r, "void main(inout half4 color) { color.r = color.g > color.b ? color.g : color.b; }",
          0, 3, 2, 0, 3, 3, 2, 0);
-    test(r, "int fib(int i) { return (i < 2) ? 1 : fib(i - 1) + fib(i - 2); }"
-            "void main(inout half4 color) { color.r = half(fib(int(color.r))); }",
-         3, 0, 0, 0, 3, 0, 0, 0);
 }
 
 DEF_TEST(SkSLInterpreterCast, r) {
@@ -603,20 +600,40 @@ DEF_TEST(SkSLInterpreterCompound, r) {
     }
 }
 
+DEF_TEST(SkSLInterpreterRestrictFunctionCalls, r) {
+    auto check = [r](const char* src) {
+        SkSL::Compiler compiler;
+        auto program = compiler.convertProgram(SkSL::Program::kGeneric_Kind, SkSL::String(src),
+                                               SkSL::Program::Settings());
+        REPORTER_ASSERT(r, program);
+
+        auto byteCode = compiler.toByteCode(*program);
+        REPORTER_ASSERT(r, compiler.errorCount() > 0);
+        REPORTER_ASSERT(r, !byteCode);
+    };
+
+    // Ensure that simple recursion is not allowed
+    check("float main() { return main() + 1; }");
+
+    // Ensure that calls to undefined functions are not allowed (to prevent mutual recursion)
+    check("float foo(); float bar() { return foo(); } float foo() { return bar(); }");
+
+    // returns are not allowed inside conditionals (or loops, which are effectively the same thing)
+    check("float main(float x, float y) { if (x < y) { return x; } return y; }");
+    check("float main(float x) { while (x > 1) { return x; } return 0; }");
+}
+
 DEF_TEST(SkSLInterpreterFunctions, r) {
     const char* src =
         "float sqr(float x) { return x * x; }\n"
-        // Forward declared
-        "float sub(float x, float y);\n"
-        "float main(float x) { return sub(sqr(x), x); }\n"
         "float sub(float x, float y) { return x - y; }\n"
+        "float main(float x) { return sub(sqr(x), x); }\n"
 
         // Different signatures
         "float dot(float2 a, float2 b) { return a.x*b.x + a.y*b.y; }\n"
         "float dot(float3 a, float3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }\n"
         "float dot3_test(float x) { return dot(float3(x, x + 1, x + 2), float3(1, -1, 2)); }\n"
-        "float dot2_test(float x) { return dot(float2(x, x + 1), float2(1, -1)); }\n"
-        "int fib(int i) { return (i < 2) ? 1 : fib(i - 1) + fib(i - 2); }";
+        "float dot2_test(float x) { return dot(float2(x, x + 1), float2(1, -1)); }\n";
 
     SkSL::Compiler compiler;
     SkSL::Program::Settings settings;
@@ -634,7 +651,6 @@ DEF_TEST(SkSLInterpreterFunctions, r) {
     auto tan = byteCode->getFunction("tan");
     auto dot3 = byteCode->getFunction("dot3_test");
     auto dot2 = byteCode->getFunction("dot2_test");
-    auto fib = byteCode->getFunction("fib");
 
     REPORTER_ASSERT(r, sub);
     REPORTER_ASSERT(r, sqr);
@@ -642,7 +658,6 @@ DEF_TEST(SkSLInterpreterFunctions, r) {
     REPORTER_ASSERT(r, !tan);
     REPORTER_ASSERT(r, dot3);
     REPORTER_ASSERT(r, dot2);
-    REPORTER_ASSERT(r, fib);
 
     float out = 0.0f;
     float in = 3.0f;
@@ -654,11 +669,6 @@ DEF_TEST(SkSLInterpreterFunctions, r) {
 
     byteCode->run(dot2, &in, &out, 1, nullptr, 0);
     REPORTER_ASSERT(r, out = -1.0f);
-
-    int fibIn = 6;
-    int fibOut = 0;
-    byteCode->run(fib, (float*)&fibIn, (float*)&fibOut, 1, nullptr, 0);
-    REPORTER_ASSERT(r, fibOut == 13);
 }
 
 DEF_TEST(SkSLInterpreterOutParams, r) {
@@ -774,7 +784,8 @@ public:
         } else if (type() == *fCompiler.context().fFloat_Type) {
             *(float*) target = *fValue.as<skjson::NumberValue>();
         } else if (type() == *fCompiler.context().fBool_Type) {
-            *(bool*) target = *fValue.as<skjson::BoolValue>();
+            // ByteCode "booleans" are actually bit-masks
+            *(int*) target = *fValue.as<skjson::BoolValue>() ? ~0 : 0;
         } else {
             SkASSERT(false);
         }
@@ -834,9 +845,7 @@ DEF_TEST(SkSLInterpreterExternalValues, r) {
     SkSL::Program::Settings settings;
     const char* src = "float main() {"
                       "    outValue = 152;"
-                      "    if (root.child.value2)"
-                      "        return root.value1 * root.child.value3;"
-                      "    return -1;"
+                      "    return root.child.value2 ? root.value1 * root.child.value3 : -1;"
                       "}";
     compiler.registerExternalValue((SkSL::ExternalValue*) compiler.takeOwnership(
              std::unique_ptr<SkSL::Symbol>(new JSONExternalValue("root", &dom.root(), &compiler))));

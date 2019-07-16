@@ -14,7 +14,7 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkString.h"
-#include "tools/timer/AnimTimer.h"
+#include "tools/timer/TimeUtils.h"
 
 #include "samplecode/Sample.h"
 #include "tools/Resources.h"
@@ -56,13 +56,13 @@ protected:
         canvas->drawDrawable(fDrawable.get(), fImage->getBounds().width(), 0);
     }
 
-    bool onAnimate(const AnimTimer& animTimer) override {
+    bool onAnimate(double nanos) override {
         if (!fImage) {
             return false;
         }
 
         const double lastWallTime = fLastWallTime;
-        fLastWallTime = animTimer.msec();
+        fLastWallTime = TimeUtils::NanosToMSec(nanos);
 
         if (fRunning) {
             fCurrentTime += fLastWallTime - lastWallTime;
@@ -98,9 +98,8 @@ protected:
 
     SkString name() override { return SkString("AnimatedImage"); }
 
-    bool onQuery(Sample::Event* evt) override {
-        SkUnichar uni;
-        if (fImage && Sample::CharQ(*evt, &uni)) {
+    bool onChar(SkUnichar uni) override {
+        if (fImage) {
             switch (uni) {
                 case kPauseKey:
                     fRunning = !fRunning;
@@ -118,7 +117,7 @@ protected:
                     break;
             }
         }
-        return this->INHERITED::onQuery(evt);
+        return false;
     }
 
 private:

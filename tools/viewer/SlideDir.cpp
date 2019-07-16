@@ -20,7 +20,7 @@
 #include "modules/sksg/include/SkSGText.h"
 #include "modules/sksg/include/SkSGTransform.h"
 #include "src/core/SkMakeUnique.h"
-#include "tools/timer/AnimTimer.h"
+#include "tools/timer/TimeUtils.h"
 
 #include <cmath>
 #include <utility>
@@ -84,7 +84,7 @@ protected:
 
 private:
     void tick(SkMSec t) {
-        fSlide->animate(AnimTimer(t * 1e6));
+        fSlide->animate(t * 1e6);
         this->invalidate();
     }
 
@@ -158,7 +158,7 @@ public:
         fState = State::kUnfocusing;
     }
 
-    bool onMouse(SkScalar x, SkScalar y, sk_app::Window::InputState state, uint32_t modifiers) {
+    bool onMouse(SkScalar x, SkScalar y, sk_app::Window::InputState state, ModifierKey modifiers) {
         SkASSERT(fTarget);
 
         if (!fRect.contains(x, y)) {
@@ -353,13 +353,14 @@ void SlideDir::draw(SkCanvas* canvas) {
     fScene->render(canvas);
 }
 
-bool SlideDir::animate(const AnimTimer& timer) {
+bool SlideDir::animate(double nanos) {
+    SkMSec msec = TimeUtils::NanosToMSec(nanos);
     if (fTimeBase == 0) {
         // Reset the animation time.
-        fTimeBase = timer.msec();
+        fTimeBase = msec;
     }
 
-    const auto t = timer.msec() - fTimeBase;
+    const auto t = msec - fTimeBase;
     fScene->animate(t);
     fFocusController->tick(t);
 
@@ -379,8 +380,8 @@ bool SlideDir::onChar(SkUnichar c) {
 }
 
 bool SlideDir::onMouse(SkScalar x, SkScalar y, sk_app::Window::InputState state,
-                       uint32_t modifiers) {
-    if (state == sk_app::Window::kMove_InputState || modifiers)
+                       ModifierKey modifiers) {
+    if (state == sk_app::Window::kMove_InputState || ModifierKeyIsSet(modifiers))
         return false;
 
     if (fFocusController->hasFocus()) {

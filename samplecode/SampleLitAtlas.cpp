@@ -14,7 +14,6 @@
 #include "src/shaders/SkBitmapProcShader.h"
 #include "src/shaders/SkLightingShader.h"
 #include "src/shaders/SkLights.h"
-#include "tools/timer/AnimTimer.h"
 
 #include "tools/ToolUtils.h"
 
@@ -449,9 +448,7 @@ public:
 protected:
     SkString name() override { return SkString("DrawLitAtlas"); }
 
-    bool onQuery(Sample::Event* evt) override {
-        SkUnichar uni;
-        if (Sample::CharQ(*evt, &uni)) {
+    bool onChar(SkUnichar uni) override {
             switch (uni) {
                 case 'C':
                     fDrawable->toggleUseColors();
@@ -471,15 +468,14 @@ protected:
                 default:
                     break;
             }
-        }
-        return this->INHERITED::onQuery(evt);
+            return false;
     }
 
     void onDrawContent(SkCanvas* canvas) override {
         canvas->drawDrawable(fDrawable.get());
     }
 
-    bool onAnimate(const AnimTimer& timer) override { return true; }
+    bool onAnimate(double nanos) override { return true; }
 
 private:
     sk_sp<DrawLitAtlasDrawable> fDrawable;

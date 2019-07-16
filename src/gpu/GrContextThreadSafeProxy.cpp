@@ -15,6 +15,10 @@
 #include "src/gpu/GrSkSLFPFactoryCache.h"
 #include "src/image/SkSurface_Gpu.h"
 
+#ifdef SK_VULKAN
+#include "src/gpu/vk/GrVkCaps.h"
+#endif
+
 GrContextThreadSafeProxy::GrContextThreadSafeProxy(GrBackendApi backend,
                                                    const GrContextOptions& options,
                                                    uint32_t contextID)
@@ -33,7 +37,8 @@ SkSurfaceCharacterization GrContextThreadSafeProxy::createCharacterization(
                                      const SkImageInfo& ii, const GrBackendFormat& backendFormat,
                                      int sampleCnt, GrSurfaceOrigin origin,
                                      const SkSurfaceProps& surfaceProps,
-                                     bool isMipMapped, bool willUseGLFBO0, bool isTextureable) {
+                                     bool isMipMapped, bool willUseGLFBO0, bool isTextureable,
+                                     GrProtected isProtected) {
     if (!backendFormat.isValid()) {
         return SkSurfaceCharacterization(); // return an invalid characterization
     }
@@ -53,12 +58,13 @@ SkSurfaceCharacterization GrContextThreadSafeProxy::createCharacterization(
         return SkSurfaceCharacterization(); // return an invalid characterization
     }
 
+    GrColorType grColorType = SkColorTypeToGrColorType(ii.colorType());
 
-    if (!this->caps()->areColorTypeAndFormatCompatible(ii.colorType(), backendFormat)) {
+    if (!this->caps()->areColorTypeAndFormatCompatible(grColorType, backendFormat)) {
         return SkSurfaceCharacterization(); // return an invalid characterization
     }
 
-    sampleCnt = this->caps()->getRenderTargetSampleCount(sampleCnt, ii.colorType(), backendFormat);
+    sampleCnt = this->caps()->getRenderTargetSampleCount(sampleCnt, grColorType, backendFormat);
     if (!sampleCnt) {
         return SkSurfaceCharacterization(); // return an invalid characterization
     }
@@ -67,9 +73,24 @@ SkSurfaceCharacterization GrContextThreadSafeProxy::createCharacterization(
         return SkSurfaceCharacterization(); // return an invalid characterization
     }
 
-    if (isTextureable && !this->caps()->isFormatTexturable(ii.colorType(), backendFormat)) {
+    if (isTextureable && !this->caps()->isFormatTexturable(grColorType, backendFormat)) {
         // Skia doesn't agree that this is textureable.
         return SkSurfaceCharacterization(); // return an invalid characterization
+    }
+
+    if (GrBackendApi::kVulkan == backendFormat.backend()) {
+        if (GrBackendApi::kVulkan != this->backend()) {
+            return SkSurfaceCharacterization(); // return an invalid characterization
+        }
+
+#ifdef SK_VULKAN
+        const GrVkCaps* vkCaps = (const GrVkCaps*) this->caps();
+
+        // The protection status of the characterization and the context need to match
+        if (isProtected != GrProtected(vkCaps->supportsProtectedMemory())) {
+            return SkSurfaceCharacterization(); // return an invalid characterization
+        }
+#endif
     }
 
     return SkSurfaceCharacterization(sk_ref_sp<GrContextThreadSafeProxy>(this),
@@ -79,6 +100,7 @@ SkSurfaceCharacterization GrContextThreadSafeProxy::createCharacterization(
                                      SkSurfaceCharacterization::MipMapped(isMipMapped),
                                      SkSurfaceCharacterization::UsesGLFBO0(willUseGLFBO0),
                                      SkSurfaceCharacterization::VulkanSecondaryCBCompatible(false),
+                                     isProtected,
                                      surfaceProps);
 }
 

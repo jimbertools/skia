@@ -15,7 +15,6 @@
 #include "src/core/SkStrikeSpec.h"
 #include "src/core/SkTaskGroup.h"
 #include "tools/ToolUtils.h"
-#include "tools/timer/AnimTimer.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Static text from paths.
@@ -56,15 +55,12 @@ public:
 
     SkString name() override { return SkString(this->getName()); }
 
-    bool onQuery(Sample::Event* evt) override {
-        SkUnichar unichar;
-        if (Sample::CharQ(*evt, &unichar)) {
+    bool onChar(SkUnichar unichar) override {
             if (unichar == 'X') {
                 fDoClip = !fDoClip;
                 return true;
             }
-        }
-        return this->INHERITED::onQuery(evt);
+            return false;
     }
 
     void onDrawContent(SkCanvas* canvas) override {
@@ -167,15 +163,15 @@ public:
         fLastTick = 0;
     }
 
-    bool onAnimate(const AnimTimer& timer) final {
+    bool onAnimate(double nanos) final {
         fBackgroundAnimationTask.wait();
         this->swapAnimationBuffers();
 
-        const double tsec = timer.secs();
-        const double dt = fLastTick ? (timer.secs() - fLastTick) : 0;
+        const double tsec = 1e-9 * nanos;
+        const double dt = fLastTick ? (1e-9 * nanos - fLastTick) : 0;
         fBackgroundAnimationTask.add(std::bind(&MovingPathText::runAnimationTask, this, tsec,
                                                dt, this->width(), this->height()));
-        fLastTick = timer.secs();
+        fLastTick = 1e-9 * nanos;
         return true;
     }
 

@@ -6,6 +6,7 @@
 */
 
 #include "src/core/SkUtils.h"
+#include "tools/ModifierKey.h"
 #include "tools/sk_app/mac/WindowContextFactory_mac.h"
 #include "tools/sk_app/mac/Window_mac.h"
 
@@ -40,10 +41,6 @@ Window* Window::CreateNativeWindow(void*) {
 }
 
 bool Window_mac::initWindow() {
-    if (fRequestedDisplayParams.fMSAASampleCount != fMSAASampleCount) {
-        this->closeWindow();
-    }
-
     // we already have a window
     if (fWindow) {
         return true;
@@ -228,23 +225,23 @@ static Window::Key get_key(unsigned short vk) {
     return Window::Key::kNONE;
 }
 
-static uint32_t get_modifiers(const NSEvent* event) {
+static ModifierKey get_modifiers(const NSEvent* event) {
     NSUInteger modifierFlags = [event modifierFlags];
-    auto modifiers = 0;
+    ModifierKey modifiers = ModifierKey::kNone;
 
     if (modifierFlags & NSEventModifierFlagShift) {
-        modifiers |= Window::kShift_ModifierKey;
+        modifiers |= ModifierKey::kShift;
     }
     if (modifierFlags & NSEventModifierFlagControl) {
-        modifiers |= Window::kControl_ModifierKey;
+        modifiers |= ModifierKey::kControl;
     }
     if (modifierFlags & NSEventModifierFlagOption) {
-        modifiers |= Window::kOption_ModifierKey;
+        modifiers |= ModifierKey::kOption;
     }
 
     if ((NSKeyDown == [event type] || NSKeyUp == [event type]) &&
         NO == [event isARepeat]) {
-        modifiers |= Window::kFirstPress_ModifierKey;
+        modifiers |= ModifierKey::kFirstPress;
     }
 
     return modifiers;

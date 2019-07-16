@@ -447,7 +447,7 @@ func defaultSwarmDimensions(parts map[string]string) []string {
 			"Mac10.14":   "Mac-10.14.3",
 			"Ubuntu18":   "Ubuntu-18.04",
 			"Win":        DEFAULT_OS_WIN,
-			"Win10":      "Windows-10-17763.503",
+			"Win10":      "Windows-10-17763.557",
 			"Win2016":    DEFAULT_OS_WIN,
 			"Win7":       "Windows-7-SP1",
 			"Win8":       "Windows-8.1-SP0",
@@ -1057,9 +1057,16 @@ func infra(b *specs.TasksCfgBuilder, name string) string {
 			fmt.Sprintf("pool:%s", CONFIG.Pool),
 		}
 	}
-	task := kitchenTask(name, "infra", "swarm_recipe.isolate", SERVICE_ACCOUNT_COMPILE, dims, EXTRA_PROPS, OUTPUT_NONE)
+	extraProps := map[string]string{
+		"repository": specs.PLACEHOLDER_REPO,
+	}
+	task := kitchenTask(name, "infra", "infra_tests.isolate", SERVICE_ACCOUNT_COMPILE, dims, extraProps, OUTPUT_NONE)
 	task.CipdPackages = append(task.CipdPackages, CIPD_PKGS_GSUTIL...)
-	usesGit(task, name)
+	task.Idempotent = true
+	// Repos which call into Skia's gen_tasks.go should define their own
+	// infra_tests.isolate and therefore should not use relpath().
+	task.Isolate = "infra_tests.isolate"
+	usesGit(task, name) // We don't run bot_update, but Go needs a git repo.
 	usesGo(b, task, name)
 	b.MustAddTask(name, task)
 	return name

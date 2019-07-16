@@ -605,6 +605,8 @@ def base_defines(os_conditions):
         "SK_DISABLE_LOWP_RASTER_PIPELINE",
         # JPEG is in codec_limited
         "SK_HAS_JPEG_LIBRARY",
+        # Needed for some tests in dm
+        "SK_ENABLE_SKSL_INTERPRETER",
     ] + skia_select(
         os_conditions,
         [
@@ -668,7 +670,10 @@ def sksg_lib_hdrs():
     return native.glob(["modules/sksg/include/*.h"])
 
 def sksg_lib_srcs():
-    return native.glob(["modules/sksg/src/*.cpp"])
+    return native.glob([
+        "modules/sksg/src/*.cpp",
+        "modules/sksg/src/*.h",
+    ])
 
 ################################################################################
 ## skparagraph_lib

@@ -83,19 +83,40 @@ namespace skvm {
         using DstEqOpX = void(Ymm dst, Ymm x);
         DstEqOpX vcvtdq2ps, vcvttps2dq;
 
-        struct Label { int offset; };
+        struct Label {
+            int                                 offset = 0;
+            enum { None, ARMDisp19, X86Disp32 } kind = None;
+            std::vector<int>                    references;
+        };
+
         Label here();
+        void label(Label*);
 
-        void jne(Label);
+        void jmp(Label*);
+        void je (Label*);
+        void jne(Label*);
+        void jl (Label*);
+        void cmp(GP64, int imm);
 
-        void vbroadcastss(Ymm dst, Label);
-        void vpshufb(Ymm dst, Ymm x, Label);
+        void vbroadcastss(Ymm dst, Label*);
+        void vpshufb(Ymm dst, Ymm x, Label*);
 
-        void vmovups  (Ymm dst, GP64 src);
-        void vpmovzxbd(Ymm dst, GP64 src);
+        void vmovups  (Ymm dst, GP64 ptr);   // dst = *ptr, 256-bit
+        void vpmovzxbd(Ymm dst, GP64 ptr);   // dst = *ptr,  64-bit, each uint8_t expanded to int
+        void vmovd    (Xmm dst, GP64 ptr);   // dst = *ptr,  32-bit
 
-        void vmovups(GP64 dst, Ymm src);
-        void vmovq  (GP64 dst, Xmm src);
+        void vmovups(GP64 ptr, Ymm src);     // *ptr = src, 256-bit
+        void vmovq  (GP64 ptr, Xmm src);     // *ptr = src,  64-bit
+        void vmovd  (GP64 ptr, Xmm src);     // *ptr = src,  32-bit
+
+        void movzbl(GP64 dst, GP64 ptr);     // dst = *ptr, 8-bit, uint8_t expanded to int
+        void movb  (GP64 ptr, GP64 src);     // *ptr = src, 8-bit
+
+        void vmovd_direct(GP64 dst, Xmm src);  // dst = src, 32-bit
+        void vmovd_direct(Xmm dst, GP64 src);  // dst = src, 32-bit
+
+        void vpinsrb(Xmm dst, Xmm src, GP64 ptr, int imm);  // dst = src; dst[imm] = *ptr, 8-bit
+        void vpextrb(GP64 ptr, Xmm src, int imm);           // *dst = src[imm]           , 8-bit
 
         // aarch64
 
@@ -128,14 +149,34 @@ namespace skvm {
 
         void ret (X);
         void add (X d, X n, int imm12);
-        void subs(X d, X n, int imm12);
-        void bne (Label);
+        void sub (X d, X n, int imm12);
+        void subs(X d, X n, int imm12);  // subtract setting condition flags
 
-        void ldrq(V dst, Label);  // 128-bit PC-relative load
+        // There's another encoding for unconditional branches that can jump further,
+        // but this one encoded as b.al is simple to implement and should be fine.
+        void b  (Label* l) { this->b(Condition::al, l); }
+        void bne(Label* l) { this->b(Condition::ne, l); }
+        void blt(Label* l) { this->b(Condition::lt, l); }
+
+        // "cmp ..." is just an assembler mnemonic for "subs xzr, ..."!
+        void cmp(X n, int imm12) { this->subs(xzr, n, imm12); }
+
+        // Compare and branch if zero/non-zero, as if
+        //      cmp(t,0)
+        //      beq/bne(l)
+        // but without setting condition flags.
+        void cbz (X t, Label* l);
+        void cbnz(X t, Label* l);
+
+        void ldrq(V dst, Label*);  // 128-bit PC-relative load
+
         void ldrq(V dst, X src);  // 128-bit dst = *src
-        void ldrs(V dst, X src);  //  32-bit dst[0] = *src
+        void ldrs(V dst, X src);  //  32-bit dst = *src
+        void ldrb(V dst, X src);  //   8-bit dst = *src
+
         void strq(V src, X dst);  // 128-bit *dst = src
-        void strs(V src, X dst);  //  32-bit *dst = src[0]
+        void strs(V src, X dst);  //  32-bit *dst = src
+        void strb(V src, X dst);  //   8-bit *dst = src
 
     private:
         // dst = op(dst, imm)
@@ -153,8 +194,8 @@ namespace skvm {
         void op(int prefix, int map, int opcode, int opcode_ext, Ymm dst, Ymm x, int imm);
 
         // dst = op(x,label) or op(label)
-        void op(int prefix, int map, int opcode, Ymm dst, Ymm x, Label l);
-        void op(int prefix, int map, int opcode, Ymm dst,        Label l) {
+        void op(int prefix, int map, int opcode, Ymm dst, Ymm x, Label* l);
+        void op(int prefix, int map, int opcode, Ymm dst,        Label* l) {
             this->op(prefix, map, opcode, dst, (Ymm)0, l);
         }
 
@@ -170,7 +211,17 @@ namespace skvm {
         void op(uint32_t op22, V n, V d) { this->op(op22,0,n,d); }
         void op(uint32_t op22, X x, V v) { this->op(op22,0,(V)x,v); }
 
+        // Order matters... value is 4-bit encoding for condition code.
+        enum class Condition { eq,ne,cs,cc,mi,pl,vs,vc,hi,ls,ge,lt,gt,le,al };
+        void b(Condition, Label*);
+
+        void jump(uint8_t condition, Label*);
+
+        int disp19(Label*);
+        int disp32(Label*);
+
         uint8_t* fCode;
+        uint8_t* fCurr;
         size_t   fSize;
     };
 
@@ -226,7 +277,6 @@ namespace skvm {
             void*  buf      = nullptr;  // Raw mmap'd buffer.
             size_t size     = 0;        // Size of buf in bytes.
             void (*entry)() = nullptr;  // Entry point, offset into buf.
-            int    mask     = 0;        // Mask of N the JIT'd code can handle.
         };
 
         void eval(int n, void* args[], size_t strides[], int nargs) const;

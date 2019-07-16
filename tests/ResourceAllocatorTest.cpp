@@ -35,7 +35,7 @@ struct ProxyParams {
 static sk_sp<GrSurfaceProxy> make_deferred(GrProxyProvider* proxyProvider, const GrCaps* caps,
                                            const ProxyParams& p) {
     GrColorType grCT = SkColorTypeToGrColorType(p.fColorType);
-    GrPixelConfig config = GrColorTypeToPixelConfig(grCT, GrSRGBEncoded::kNo);
+    GrPixelConfig config = GrColorTypeToPixelConfig(grCT);
 
     GrSurfaceDesc desc;
     desc.fFlags = p.fIsRT ? kRenderTarget_GrSurfaceFlag : kNone_GrSurfaceFlags;
@@ -44,7 +44,7 @@ static sk_sp<GrSurfaceProxy> make_deferred(GrProxyProvider* proxyProvider, const
     desc.fConfig = config;
     desc.fSampleCnt = p.fSampleCnt;
 
-    const GrBackendFormat format = caps->getBackendFormatFromColorType(p.fColorType);
+    const GrBackendFormat format = caps->getBackendFormatFromColorType(grCT);
 
     return proxyProvider->createProxy(format, desc, p.fOrigin, p.fFit, p.fBudgeted);
 }
@@ -270,7 +270,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ResourceAllocatorStressTest, reporter, ctxInf
 sk_sp<GrSurfaceProxy> make_lazy(GrProxyProvider* proxyProvider, const GrCaps* caps,
                                 const ProxyParams& p, bool deinstantiate) {
     GrColorType grCT = SkColorTypeToGrColorType(p.fColorType);
-    GrPixelConfig config = GrColorTypeToPixelConfig(grCT, GrSRGBEncoded::kNo);
+    GrPixelConfig config = GrColorTypeToPixelConfig(grCT);
 
     GrSurfaceDesc desc;
     desc.fFlags = p.fIsRT ? kRenderTarget_GrSurfaceFlag : kNone_GrSurfaceFlags;
@@ -291,7 +291,7 @@ sk_sp<GrSurfaceProxy> make_lazy(GrProxyProvider* proxyProvider, const GrCaps* ca
         }
         return GrSurfaceProxy::LazyInstantiationResult(std::move(texture));
     };
-    const GrBackendFormat format = caps->getBackendFormatFromColorType(p.fColorType);
+    const GrBackendFormat format = caps->getBackendFormatFromColorType(grCT);
     auto lazyType = deinstantiate ? GrSurfaceProxy::LazyInstantiationType ::kDeinstantiate
                                   : GrSurfaceProxy::LazyInstantiationType ::kSingleUse;
     GrInternalSurfaceFlags flags = GrInternalSurfaceFlags::kNone;

@@ -48,9 +48,9 @@ public:
     CCPRGeometryView() { this->updateGpuData(); }
     void onDrawContent(SkCanvas*) override;
 
-    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, unsigned) override;
+    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, ModifierKey) override;
     bool onClick(Sample::Click*) override;
-    bool onQuery(Sample::Event* evt) override;
+    bool onChar(SkUnichar) override;
     SkString name() override { return SkString("CCPRGeometry"); }
 
 private:
@@ -401,37 +401,32 @@ void CCPRGeometryView::DrawCoverageCountOp::onExecute(GrOpFlushState* state,
 
 class CCPRGeometryView::Click : public Sample::Click {
 public:
-    Click(Sample* target, int ptIdx) : Sample::Click(target), fPtIdx(ptIdx) {}
+    Click(int ptIdx) : fPtIdx(ptIdx) {}
 
     void doClick(SkPoint points[]) {
         if (fPtIdx >= 0) {
-            this->dragPoint(points, fPtIdx);
+            points[fPtIdx] += fCurr - fPrev;
         } else {
             for (int i = 0; i < 4; ++i) {
-                this->dragPoint(points, i);
+                points[i] += fCurr - fPrev;
             }
         }
     }
 
 private:
-    void dragPoint(SkPoint points[], int idx) {
-        SkIPoint delta = fICurr - fIPrev;
-        points[idx] += SkPoint::Make(delta.x(), delta.y());
-    }
-
     int fPtIdx;
 };
 
-Sample::Click* CCPRGeometryView::onFindClickHandler(SkScalar x, SkScalar y, unsigned) {
+Sample::Click* CCPRGeometryView::onFindClickHandler(SkScalar x, SkScalar y, ModifierKey) {
     for (int i = 0; i < 4; ++i) {
         if (PrimitiveType::kCubics != fPrimitiveType && 2 == i) {
             continue;
         }
         if (fabs(x - fPoints[i].x()) < 20 && fabsf(y - fPoints[i].y()) < 20) {
-            return new Click(this, i);
+            return new Click(i);
         }
     }
-    return new Click(this, -1);
+    return new Click(-1);
 }
 
 bool CCPRGeometryView::onClick(Sample::Click* click) {
@@ -441,9 +436,7 @@ bool CCPRGeometryView::onClick(Sample::Click* click) {
     return true;
 }
 
-bool CCPRGeometryView::onQuery(Sample::Event* evt) {
-    SkUnichar unichar;
-    if (Sample::CharQ(*evt, &unichar)) {
+bool CCPRGeometryView::onChar(SkUnichar unichar) {
         if (unichar >= '1' && unichar <= '4') {
             fPrimitiveType = PrimitiveType(unichar - '1');
             if (fPrimitiveType >= PrimitiveType::kWeightedTriangles) {
@@ -493,8 +486,7 @@ bool CCPRGeometryView::onQuery(Sample::Event* evt) {
             fDoStroke = !fDoStroke;
             this->updateAndInval();
         }
-    }
-    return this->INHERITED::onQuery(evt);
+        return false;
 }
 
 DEF_SAMPLE(return new CCPRGeometryView;)

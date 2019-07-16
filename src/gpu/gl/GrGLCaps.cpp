@@ -113,7 +113,6 @@ void GrGLCaps::init(const GrContextOptions& contextOptions,
         fWritePixelsRowBytesSupport = version >= GR_GL_VER(2, 0);
         fReadPixelsRowBytesSupport = version >= GR_GL_VER(2, 0);
     }
-
     if (fDriverBugWorkarounds.pack_parameters_workaround_with_pack_buffer) {
         // In some cases drivers handle copying the last row incorrectly
         // when using GL_PACK_ROW_LENGTH.  Chromium handles this by iterating
@@ -147,10 +146,8 @@ void GrGLCaps::init(const GrContextOptions& contextOptions,
     if (((GR_IS_GR_GL(standard) && version >= GR_GL_VER(4,3)) ||
          (GR_IS_GR_GL_ES(standard) && version >= GR_GL_VER(3,0)) ||
          ctxInfo.hasExtension("GL_ARB_invalidate_subdata"))) {
-        fDiscardRenderTargetSupport = true;
         fInvalidateFBType = kInvalidate_InvalidateFBType;
     } else if (ctxInfo.hasExtension("GL_EXT_discard_framebuffer")) {
-        fDiscardRenderTargetSupport = true;
         fInvalidateFBType = kDiscard_InvalidateFBType;
     }
 
@@ -1284,19 +1281,20 @@ void GrGLCaps::onDumpJSON(SkJSONWriter* writer) const {
     for (int i = 0; i < kGrPixelConfigCnt; ++i) {
         writer->beginObject(nullptr, false);
         writer->appendHexU32("flags", fConfigTable[i].fFlags);
-        writer->appendHexU32("b_internal", fConfigTable[i].fFormats.fBaseInternalFormat);
-        writer->appendHexU32("s_internal", fConfigTable[i].fFormats.fSizedInternalFormat);
+//        writer->appendHexU32("b_internal", fConfigTable[i].fFormats.fBaseInternalFormat);
+//        writer->appendHexU32("s_internal", fConfigTable[i].fFormats.fSizedInternalFormat);
         writer->appendHexU32("e_format_read_pixels",
                              fConfigTable[i].fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage]);
         writer->appendHexU32(
                 "e_format_teximage",
                 fConfigTable[i].fFormats.fExternalFormat[kTexImage_ExternalFormatUsage]);
         writer->appendHexU32("e_type", fConfigTable[i].fFormats.fExternalType);
-        writer->appendHexU32("i_for_teximage", fConfigTable[i].fFormats.fInternalFormatTexImage);
-        writer->appendHexU32("i_for_renderbuffer",
-                             fConfigTable[i].fFormats.fInternalFormatRenderbuffer);
+//        writer->appendHexU32("i_for_teximage", fConfigTable[i].fFormats.fInternalFormatTexImage);
+//        writer->appendHexU32("i_for_renderbuffer",
+//                             fConfigTable[i].fFormats.fInternalFormatRenderbuffer);
         writer->endObject();
     }
+// TODO: Add dump of FormatInfos
 
     writer->endArray();
     writer->endObject();
@@ -1306,7 +1304,7 @@ void GrGLCaps::onDumpJSON(SkJSONWriter* writer) const { }
 #endif
 
 bool GrGLCaps::bgraIsInternalFormat() const {
-    return fConfigTable[kBGRA_8888_GrPixelConfig].fFormats.fBaseInternalFormat == GR_GL_BGRA;
+    return this->getFormatFromColorType(GrColorType::kBGRA_8888) == GrGLFormat::kBGRA8;
 }
 
 bool GrGLCaps::getTexImageFormats(GrPixelConfig surfaceConfig, GrPixelConfig externalConfig,
@@ -1316,7 +1314,7 @@ bool GrGLCaps::getTexImageFormats(GrPixelConfig surfaceConfig, GrPixelConfig ext
                                  externalFormat, externalType)) {
         return false;
     }
-    *internalFormat = fConfigTable[surfaceConfig].fFormats.fInternalFormatTexImage;
+    *internalFormat = this->getTexImageInternalFormat(this->pixelConfigToFormat(surfaceConfig));
     return true;
 }
 
@@ -1325,7 +1323,7 @@ bool GrGLCaps::getCompressedTexImageFormats(GrPixelConfig surfaceConfig,
     if (!GrPixelConfigIsCompressed(surfaceConfig)) {
         return false;
     }
-    *internalFormat = fConfigTable[surfaceConfig].fFormats.fInternalFormatTexImage;
+    *internalFormat = this->getTexImageInternalFormat(this->pixelConfigToFormat(surfaceConfig));
     return true;
 }
 
@@ -1336,15 +1334,6 @@ bool GrGLCaps::getReadPixelsFormat(GrPixelConfig surfaceConfig, GrPixelConfig ex
         return false;
     }
     return true;
-}
-
-void GrGLCaps::getRenderbufferFormat(GrPixelConfig config, GrGLenum* internalFormat) const {
-    SkASSERT(!GrPixelConfigIsCompressed(config));
-    *internalFormat = fConfigTable[config].fFormats.fInternalFormatRenderbuffer;
-}
-
-void GrGLCaps::getSizedInternalFormat(GrPixelConfig config, GrGLenum* internalFormat) const {
-    *internalFormat = fConfigTable[config].fFormats.fSizedInternalFormat;
 }
 
 bool GrGLCaps::getExternalFormat(GrPixelConfig surfaceConfig, GrPixelConfig memoryConfig,
@@ -1374,51 +1363,16 @@ bool GrGLCaps::getExternalFormat(GrPixelConfig surfaceConfig, GrPixelConfig memo
     return true;
 }
 
-const GrGLCaps::FormatInfo& GrGLCaps::getFormatInfo(GrGLenum glFormat) const {
-    GrGLCaps* nonConstThis = const_cast<GrGLCaps*>(this);
-    return nonConstThis->getFormatInfo(glFormat);
+void GrGLCaps::setStencilFormatIndexForFormat(GrGLFormat format, int index) {
+    SkASSERT(!this->hasStencilFormatBeenDeterminedForFormat(format));
+    this->getFormatInfo(format).fStencilFormatIndex =
+            index < 0 ? FormatInfo::kUnsupported_StencilFormatIndex : index;
 }
 
-GrGLCaps::FormatInfo& GrGLCaps::getFormatInfo(GrGLenum glFormat) {
-    // These are all the valid sized formats that we support in Skia. They are roughly ordered from
-    // most frequently used to least to improve look up times in arrays.
-    static constexpr GrGLenum kGLFormats[] = {
-        GR_GL_RGBA8,
-        GR_GL_R8,
-        GR_GL_ALPHA8,
-        GR_GL_LUMINANCE8,
-        GR_GL_BGRA8,
-        GR_GL_RGB565,
-        GR_GL_RGBA16F,
-        GR_GL_R16F,
-        GR_GL_RGB8,
-        GR_GL_RG8,
-        GR_GL_RGB10_A2,
-        GR_GL_RGBA4,
-        GR_GL_RGBA32F,
-        GR_GL_RG32F,
-        GR_GL_SRGB8_ALPHA8,
-        GR_GL_COMPRESSED_RGB8_ETC2,
-        GR_GL_COMPRESSED_ETC1_RGB8,
-        GR_GL_R16,
-        GR_GL_RG16,
-        // Experimental (for Y416 and mutant P016/P010)
-        GR_GL_RGBA16,
-        GR_GL_RG16F,
-    };
-    static_assert(SK_ARRAY_COUNT(kGLFormats) == GrGLCaps::kNumGLFormats,
-                  "Size of GLFormats array must match static value in header");
-
-    SkASSERT(GrGLFormatIsSupported(glFormat));
-
-    for (size_t i = 0; i < SK_ARRAY_COUNT(kGLFormats); ++i) {
-        if (kGLFormats[i] == glFormat) {
-            return fFormatTable[i];
-        }
-    }
-    SK_ABORT("Invalid GL format");
-    static FormatInfo kInvalidFormat;
-    return kInvalidFormat;
+void GrGLCaps::setColorTypeFormat(GrColorType colorType, GrGLFormat format) {
+    int idx = static_cast<int>(colorType);
+    SkASSERT(fColorTypeToFormatTable[idx] == GrGLFormat::kUnknown);
+    fColorTypeToFormatTable[idx] = format;
 }
 
 void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
@@ -1455,6 +1409,16 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
     // when using glTexStorage2D. This appears to affect OOP-R (so not just over command buffer).
     texStorageSupported = false;
 #endif
+
+    // ES 2.0 requires that the internal/external formats match so we can't use sized internal
+    // formats for glTexImage until ES 3.0. TODO: Support sized internal formats in WebGL2.
+    bool texImageSupportsSizedInternalFormat =
+            (GR_IS_GR_GL(standard) || (GR_IS_GR_GL_ES(standard) && version >= GR_GL_VER(3,0)));
+
+    // All ES versions (thus far) require sized internal formats for render buffers.
+    // TODO: Always use sized internal format?
+    bool renderbufferStorageSupportsSizedInternalFormat =
+            GR_IS_GR_GL_ES(standard) || GR_IS_GR_WEBGL(standard);
 
     // This is set when we know we have both texture and render support for:
     // R 8/16/16F
@@ -1547,11 +1511,27 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
         }
     } // No WebGL support
 
+    for (int i = 0; i < kGrColorTypeCnt; ++i) {
+        fColorTypeToFormatTable[i] = GrGLFormat::kUnknown;
+    }
+
     ///////////////////////////////////////////////////////////////////////////
+
+    GrGLenum halfFloatType = GR_GL_HALF_FLOAT;
+    if (GR_IS_GR_GL_ES(standard) && version < GR_GL_VER(3, 0)) {
+        halfFloatType = GR_GL_HALF_FLOAT_OES;
+    }
 
     // RGBA8
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_RGBA8);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kRGBA8);
+        info.fBaseInternalFormat = GR_GL_RGBA;
+        info.fSizedInternalFormat = GR_GL_RGBA8;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_RGBA8 : GR_GL_RGBA;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_RGBA8 : GR_GL_RGBA;
+        info.fDefaultExternalType = GR_GL_UNSIGNED_BYTE;
         info.fFlags = FormatInfo::kTextureable_Flag;
         if (GR_IS_GR_GL(standard)) {
             info.fFlags |= msaaRenderFlags;
@@ -1572,6 +1552,7 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
         {
             uint32_t flags = ColorTypeInfo::kUploadData_Flag;
             info.fColorTypeInfos.emplace_back(GrColorType::kRGBA_8888, flags);
+            this->setColorTypeFormat(GrColorType::kRGBA_8888, GrGLFormat::kRGBA8);
         }
 
         // kBGRA_8888
@@ -1580,14 +1561,28 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
                 if (version >= GR_GL_VER(1, 2) || ctxInfo.hasExtension("GL_EXT_bgra")) {
                     uint32_t flags = ColorTypeInfo::kUploadData_Flag;
                     info.fColorTypeInfos.emplace_back(GrColorType::kBGRA_8888, flags);
+                    this->setColorTypeFormat(GrColorType::kBGRA_8888, GrGLFormat::kRGBA8);
                 }
             }
+        }
+
+        // kRGB_888x
+        {
+            uint32_t flags = ColorTypeInfo::kUploadData_Flag;
+            info.fColorTypeInfos.emplace_back(GrColorType::kRGB_888x, flags);
         }
     }
 
     // R8
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_R8);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kR8);
+        info.fBaseInternalFormat = GR_GL_RED;
+        info.fSizedInternalFormat = GR_GL_R8;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_R8 : GR_GL_RED;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_R8 : GR_GL_RED;
+        info.fDefaultExternalType = GR_GL_UNSIGNED_BYTE;
         if (textureRedSupport) {
             info.fFlags |= FormatInfo::kTextureable_Flag | msaaRenderFlags;
         }
@@ -1602,11 +1597,13 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
             // kAlpha_8
             {
                 info.fColorTypeInfos.emplace_back(GrColorType::kAlpha_8, flags);
+                this->setColorTypeFormat(GrColorType::kAlpha_8, GrGLFormat::kR8);
             }
 
             // kGray_8
             {
                 info.fColorTypeInfos.emplace_back(GrColorType::kGray_8, flags);
+                this->setColorTypeFormat(GrColorType::kGray_8, GrGLFormat::kR8);
             }
         }
     }
@@ -1618,7 +1615,19 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
         bool alpha8IsValidForGLES = GR_IS_GR_GL_ES(standard) && version < GR_GL_VER(3, 0);
         bool alpha8IsValidForWebGL = GR_IS_GR_WEBGL(standard);
 
-        FormatInfo& info = this->getFormatInfo(GR_GL_ALPHA8);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kALPHA8);
+        info.fBaseInternalFormat = GR_GL_ALPHA;
+        info.fSizedInternalFormat = GR_GL_ALPHA8;
+        if (GR_IS_GR_GL_ES(standard) || !texImageSupportsSizedInternalFormat) {
+            // ES does not have sized internal format GL_ALPHA8.
+            info.fInternalFormatForTexImage = GR_GL_ALPHA;
+        } else {
+            info.fInternalFormatForTexImage = GR_GL_ALPHA8;
+        }
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_ALPHA8 : GR_GL_ALPHA;
+
+        info.fDefaultExternalType = GR_GL_UNSIGNED_BYTE;
         if (alpha8IsValidForGL || alpha8IsValidForGLES || alpha8IsValidForWebGL) {
             info.fFlags = FormatInfo::kTextureable_Flag;
         }
@@ -1637,6 +1646,10 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
                 uint32_t flags = ColorTypeInfo::kUploadData_Flag;
                 if (alpha8IsValidForGL || alpha8IsValidForGLES || alpha8IsValidForWebGL) {
                     info.fColorTypeInfos.emplace_back(GrColorType::kAlpha_8, flags);
+                    int idx = static_cast<int>(GrColorType::kAlpha_8);
+                    if (fColorTypeToFormatTable[idx] == GrGLFormat::kUnknown) {
+                        this->setColorTypeFormat(GrColorType::kAlpha_8, GrGLFormat::kALPHA8);
+                    }
                 }
             }
         }
@@ -1644,7 +1657,14 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
 
     // LUMINANCE8
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_LUMINANCE8);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kLUMINANCE8);
+        info.fBaseInternalFormat = GR_GL_LUMINANCE;
+        info.fSizedInternalFormat = GR_GL_LUMINANCE8;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_LUMINANCE8 : GR_GL_LUMINANCE;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_LUMINANCE8 : GR_GL_LUMINANCE;
+        info.fDefaultExternalType = GR_GL_UNSIGNED_BYTE;
         bool supportsLum = (GR_IS_GR_GL(standard) && version <= GR_GL_VER(3, 0)) ||
                            (GR_IS_GR_GL_ES(standard) && version < GR_GL_VER(3, 0)) ||
                            (GR_IS_GR_WEBGL(standard));
@@ -1670,6 +1690,10 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
             {
                 uint32_t flags = ColorTypeInfo::kUploadData_Flag;
                 info.fColorTypeInfos.emplace_back(GrColorType::kGray_8, flags);
+                int idx = static_cast<int>(GrColorType::kGray_8);
+                if (fColorTypeToFormatTable[idx] == GrGLFormat::kUnknown) {
+                    this->setColorTypeFormat(GrColorType::kGray_8, GrGLFormat::kLUMINANCE8);
+                }
             }
         }
 
@@ -1677,7 +1701,37 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
 
     // BGRA8
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_BGRA8);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kBGRA8);
+        info.fBaseInternalFormat = GR_GL_BGRA;
+        info.fSizedInternalFormat = GR_GL_BGRA8;
+        // If BGRA is supported as an internal format it must always be specified to glTex[Sub]Image
+        // as a base format. Which base format depends on which extension is used.
+        if (ctxInfo.hasExtension("GL_APPLE_texture_format_BGRA8888")) {
+            // GL_APPLE_texture_format_BGRA8888:
+            //     ES 2.0: the extension makes BGRA an external format but not an internal format.
+            //     ES 3.0: the extension explicitly states GL_BGRA8 is not a valid internal format
+            //             for glTexImage (just for glTexStorage).
+            info.fInternalFormatForTexImage = GR_GL_RGBA;
+        } else {
+            // GL_EXT_texture_format_BGRA8888:
+            //      This extension adds GL_BGRA as an unsized internal format. However, it is
+            //      written against ES 2.0 and therefore doesn't define a GL_BGRA8 as ES 2.0 doesn't
+            //      have sized internal formats.
+            info.fInternalFormatForTexImage = GR_GL_BGRA;
+        }
+
+        if (ctxInfo.hasExtension("GL_APPLE_texture_format_BGRA8888")) {
+            if (renderbufferStorageSupportsSizedInternalFormat) {
+                info.fInternalFormatForRenderbuffer = GR_GL_RGBA8;
+            } else {
+                info.fInternalFormatForRenderbuffer = GR_GL_RGBA;
+            }
+        } else {
+            info.fInternalFormatForRenderbuffer =
+                    renderbufferStorageSupportsSizedInternalFormat ? GR_GL_BGRA8 : GR_GL_BGRA;
+        }
+
+        info.fDefaultExternalType = GR_GL_UNSIGNED_BYTE;
         // TexStorage requires using a sized internal format and BGRA8 is only supported if we have
         // the GL_APPLE_texture_format_BGRA8888 extension or if we have GL_EXT_texture_storage and
         // GL_EXT_texture_format_BGRA8888.
@@ -1718,22 +1772,29 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
             {
                 uint32_t flags = ColorTypeInfo::kUploadData_Flag;
                 info.fColorTypeInfos.emplace_back(GrColorType::kBGRA_8888, flags);
+                this->setColorTypeFormat(GrColorType::kBGRA_8888, GrGLFormat::kBGRA8);
             }
         }
     }
 
     // RGB565
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_RGB565);
-        info.fFlags = FormatInfo::kTextureable_Flag;
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kRGB565);
+        info.fBaseInternalFormat = GR_GL_RGB;
+        info.fSizedInternalFormat = GR_GL_RGB565;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_RGB565 : GR_GL_RGB;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_RGB565 : GR_GL_RGB;
+        info.fDefaultExternalType = GR_GL_UNSIGNED_SHORT_5_6_5;
         if (GR_IS_GR_GL(standard)) {
             if (version >= GR_GL_VER(4, 2) || ctxInfo.hasExtension("GL_ARB_ES2_compatibility")) {
-                info.fFlags |= msaaRenderFlags;
+                info.fFlags = FormatInfo::kTextureable_Flag | msaaRenderFlags;
             }
         } else if (GR_IS_GR_GL_ES(standard)) {
-            info.fFlags |= msaaRenderFlags;
+            info.fFlags = FormatInfo::kTextureable_Flag | msaaRenderFlags;
         } else if (GR_IS_GR_WEBGL(standard)) {
-            info.fFlags |= msaaRenderFlags;
+            info.fFlags = FormatInfo::kTextureable_Flag | msaaRenderFlags;
         }
         // 565 is not a sized internal format on desktop GL. So on desktop with
         // 565 we always use an unsized internal format to let the system pick
@@ -1746,16 +1807,26 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
             info.fFlags |= FormatInfo::kCanUseTexStorage_Flag;
         }
 
-        // kBGR_565
-        {
-            uint32_t flags = ColorTypeInfo::kUploadData_Flag;
-            info.fColorTypeInfos.emplace_back(GrColorType::kBGR_565, flags);
+        if (SkToBool(info.fFlags &FormatInfo::kTextureable_Flag)) {
+            // kBGR_565
+            {
+                uint32_t flags = ColorTypeInfo::kUploadData_Flag;
+                info.fColorTypeInfos.emplace_back(GrColorType::kBGR_565, flags);
+                this->setColorTypeFormat(GrColorType::kBGR_565, GrGLFormat::kRGB565);
+            }
         }
     }
 
     // RGBA16F
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_RGBA16F);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kRGBA16F);
+        info.fBaseInternalFormat = GR_GL_RGBA;
+        info.fSizedInternalFormat = GR_GL_RGBA16F;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_RGBA16F : GR_GL_RGBA;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_RGBA16F : GR_GL_RGBA;
+        info.fDefaultExternalType = halfFloatType;
         if (hasFP16Textures) {
             info.fFlags = FormatInfo::kTextureable_Flag;
             // ES requires 3.2 or EXT_color_buffer_half_float.
@@ -1773,19 +1844,28 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
             {
                 uint32_t flags = ColorTypeInfo::kUploadData_Flag;
                 info.fColorTypeInfos.emplace_back(GrColorType::kRGBA_F16, flags);
+                this->setColorTypeFormat(GrColorType::kRGBA_F16, GrGLFormat::kRGBA16F);
             }
 
             // kRGBA_F16_Clamped
             {
                 uint32_t flags = ColorTypeInfo::kUploadData_Flag;
                 info.fColorTypeInfos.emplace_back(GrColorType::kRGBA_F16_Clamped, flags);
+                this->setColorTypeFormat(GrColorType::kRGBA_F16_Clamped, GrGLFormat::kRGBA16F);
             }
         }
     }
 
     // R16F
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_R16F);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kR16F);
+        info.fBaseInternalFormat = GR_GL_RED;
+        info.fSizedInternalFormat = GR_GL_R16F;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_R16F : GR_GL_RED;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_R16F : GR_GL_RED;
+        info.fDefaultExternalType = halfFloatType;
         if (textureRedSupport && hasFP16Textures) {
             info.fFlags = FormatInfo::kTextureable_Flag;
             if (halfFPRenderTargetSupport == HalfFPRenderTargetSupport::kAll) {
@@ -1802,13 +1882,21 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
             {
                 uint32_t flags = ColorTypeInfo::kUploadData_Flag;
                 info.fColorTypeInfos.emplace_back(GrColorType::kAlpha_F16, flags);
+                this->setColorTypeFormat(GrColorType::kAlpha_F16, GrGLFormat::kR16F);
             }
         }
     }
 
     // RGB8
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_RGB8);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kRGB8);
+        info.fBaseInternalFormat = GR_GL_RGB;
+        info.fSizedInternalFormat = GR_GL_RGB8;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_RGB8 : GR_GL_RGB;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_RGB8 : GR_GL_RGB;
+        info.fDefaultExternalType = GR_GL_UNSIGNED_BYTE;
         info.fFlags = FormatInfo::kTextureable_Flag;
         if (GR_IS_GR_GL(standard)) {
             // Even in OpenGL 4.6 GL_RGB8 is required to be color renderable but not required to be
@@ -1839,12 +1927,20 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
         {
             uint32_t flags = ColorTypeInfo::kUploadData_Flag;
             info.fColorTypeInfos.emplace_back(GrColorType::kRGB_888x, flags);
+            this->setColorTypeFormat(GrColorType::kRGB_888x, GrGLFormat::kRGB8);
         }
     }
 
     // RG8
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_RG8);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kRG8);
+        info.fBaseInternalFormat = GR_GL_RG;
+        info.fSizedInternalFormat = GR_GL_RG8;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_RG8 : GR_GL_RG;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_RG8 : GR_GL_RG;
+        info.fDefaultExternalType = GR_GL_UNSIGNED_BYTE;
         if (textureRedSupport) {
             info.fFlags |= FormatInfo::kTextureable_Flag | msaaRenderFlags;
             if (texStorageSupported &&
@@ -1858,13 +1954,21 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
             {
                 uint32_t flags = ColorTypeInfo::kUploadData_Flag;
                 info.fColorTypeInfos.emplace_back(GrColorType::kRG_88, flags);
+                this->setColorTypeFormat(GrColorType::kRG_88, GrGLFormat::kRG8);
             }
         }
     }
 
     // RGB10_A2
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_RGB10_A2);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kRGB10_A2);
+        info.fBaseInternalFormat = GR_GL_RGBA;
+        info.fSizedInternalFormat = GR_GL_RGB10_A2;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_RGB10_A2 : GR_GL_RGBA;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_RGB10_A2 : GR_GL_RGBA;
+        info.fDefaultExternalType = GR_GL_UNSIGNED_INT_2_10_10_10_REV;
         if (GR_IS_GR_GL(standard) ||
            (GR_IS_GR_GL_ES(standard) && version >= GR_GL_VER(3, 0))) {
             info.fFlags = FormatInfo::kTextureable_Flag | msaaRenderFlags;
@@ -1881,13 +1985,21 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
             {
                 uint32_t flags = ColorTypeInfo::kUploadData_Flag;
                 info.fColorTypeInfos.emplace_back(GrColorType::kRGBA_1010102, flags);
+                this->setColorTypeFormat(GrColorType::kRGBA_1010102, GrGLFormat::kRGB10_A2);
             }
         }
     }
 
     // RGBA4
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_RGBA4);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kRGBA4);
+        info.fBaseInternalFormat = GR_GL_RGBA;
+        info.fSizedInternalFormat = GR_GL_RGBA4;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_RGBA4 : GR_GL_RGBA;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_RGBA4 : GR_GL_RGBA;
+        info.fDefaultExternalType = GR_GL_UNSIGNED_SHORT_4_4_4_4;
         info.fFlags = FormatInfo::kTextureable_Flag;
         if (GR_IS_GR_GL(standard)) {
             if (version >= GR_GL_VER(4, 2)) {
@@ -1906,18 +2018,33 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
         {
             uint32_t flags = ColorTypeInfo::kUploadData_Flag;
             info.fColorTypeInfos.emplace_back(GrColorType::kABGR_4444, flags);
+            this->setColorTypeFormat(GrColorType::kABGR_4444, GrGLFormat::kRGBA4);
         }
     }
 
     // RGBA32F
     {
-        //FormatInfo& info = this->getFormatInfo(GR_GL_RGBA32F);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kRGBA32F);
+        info.fBaseInternalFormat = GR_GL_RGBA;
+        info.fSizedInternalFormat = GR_GL_RGBA32F;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_RGBA32F : GR_GL_RGBA;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_RGBA32F : GR_GL_RGBA;
         // We don't allow texturing or rendering to this format
     }
 
     // SRGB8_ALPHA8
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_SRGB8_ALPHA8);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kSRGB8_ALPHA8);
+        info.fBaseInternalFormat = GR_GL_RGBA;
+        info.fSizedInternalFormat = GR_GL_SRGB8_ALPHA8;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_SRGB8_ALPHA8 : GR_GL_SRGB_ALPHA;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_SRGB8_ALPHA8
+                                                               : GR_GL_SRGB_ALPHA;
+        info.fDefaultExternalType = GR_GL_UNSIGNED_BYTE;
         if (fSRGBSupport) {
             uint32_t srgbRenderFlags =
                     formatWorkarounds.fDisableSRGBRenderWithMSAAForMacAMD ? nonMSAARenderFlags
@@ -1931,17 +2058,20 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
         }
 
         if (fSRGBSupport) {
-            // kRGBA_8888
+            // kRGBA_8888_SRGB
             {
                 uint32_t flags = ColorTypeInfo::kUploadData_Flag;
-                info.fColorTypeInfos.emplace_back(GrColorType::kRGBA_8888, flags);
+                info.fColorTypeInfos.emplace_back(GrColorType::kRGBA_8888_SRGB, flags);
+                this->setColorTypeFormat(GrColorType::kRGBA_8888_SRGB, GrGLFormat::kSRGB8_ALPHA8);
             }
         }
     }
 
     // COMPRESSED_RGB8_ETC2
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_COMPRESSED_RGB8_ETC2);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kCOMPRESSED_RGB8_ETC2);
+        info.fBaseInternalFormat = GR_GL_RGB;
+        info.fCompressedInternalFormat = GR_GL_COMPRESSED_RGB8_ETC2;
         if (GR_IS_GR_GL(standard)) {
             if (version >= GR_GL_VER(4, 3) || ctxInfo.hasExtension("GL_ARB_ES3_compatibility")) {
                 info.fFlags = FormatInfo::kTextureable_Flag;
@@ -1958,7 +2088,9 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
 
     // COMPRESSED_ETC1_RGB8
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_COMPRESSED_ETC1_RGB8);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kCOMPRESSED_ETC1_RGB8);
+        info.fBaseInternalFormat = GR_GL_RGB;
+        info.fCompressedInternalFormat = GR_GL_COMPRESSED_ETC1_RGB8;
         if (GR_IS_GR_GL_ES(standard)) {
             if (ctxInfo.hasExtension("GL_OES_compressed_ETC1_RGB8_texture")) {
                 info.fFlags = FormatInfo::kTextureable_Flag;
@@ -1970,7 +2102,14 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
 
     // GR_GL_R16
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_R16);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kR16);
+        info.fBaseInternalFormat = GR_GL_RED;
+        info.fSizedInternalFormat = GR_GL_R16;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_R16 : GR_GL_RED;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_R16 : GR_GL_RED;
+        info.fDefaultExternalType = GR_GL_UNSIGNED_SHORT;
         if (r16AndRG1616Supported) {
             info.fFlags = FormatInfo::kTextureable_Flag | msaaRenderFlags;
         }
@@ -1980,13 +2119,21 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
             {
                 uint32_t flags = ColorTypeInfo::kUploadData_Flag;
                 info.fColorTypeInfos.emplace_back(GrColorType::kR_16, flags);
+                this->setColorTypeFormat(GrColorType::kR_16, GrGLFormat::kR16);
             }
         }
     }
 
     // GR_GL_RG16
     {
-        FormatInfo& info = this->getFormatInfo(GR_GL_RG16);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kRG16);
+        info.fBaseInternalFormat = GR_GL_RG;
+        info.fSizedInternalFormat = GR_GL_RG16;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_RG16 : GR_GL_RG;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_RG16 : GR_GL_RG;
+        info.fDefaultExternalType = GR_GL_UNSIGNED_SHORT;
         if (r16AndRG1616Supported) {
             info.fFlags = FormatInfo::kTextureable_Flag | msaaRenderFlags;
         }
@@ -1996,6 +2143,7 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
             {
                 uint32_t flags = ColorTypeInfo::kUploadData_Flag;
                 info.fColorTypeInfos.emplace_back(GrColorType::kRG_1616, flags);
+                this->setColorTypeFormat(GrColorType::kRG_1616, GrGLFormat::kRG16);
             }
         }
     }
@@ -2021,7 +2169,14 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
             }
         } // No WebGL support
 
-        FormatInfo& info = this->getFormatInfo(GR_GL_RGBA16);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kRGBA16);
+        info.fBaseInternalFormat = GR_GL_RGBA;
+        info.fSizedInternalFormat = GR_GL_RGBA16;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_RGBA16 : GR_GL_RGBA;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_RGBA16 : GR_GL_RGBA;
+        info.fDefaultExternalType = GR_GL_UNSIGNED_SHORT;
         if (rgba16161616Supported) {
             info.fFlags = FormatInfo::kTextureable_Flag | msaaRenderFlags;
         }
@@ -2031,6 +2186,7 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
             {
                 uint32_t flags = ColorTypeInfo::kUploadData_Flag;
                 info.fColorTypeInfos.emplace_back(GrColorType::kRGBA_16161616, flags);
+                this->setColorTypeFormat(GrColorType::kRGBA_16161616, GrGLFormat::kRGBA16);
             }
         }
     }
@@ -2060,7 +2216,14 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
             }
         }
 
-        FormatInfo& info = this->getFormatInfo(GR_GL_RG16F);
+        FormatInfo& info = this->getFormatInfo(GrGLFormat::kRG16F);
+        info.fBaseInternalFormat = GR_GL_RG;
+        info.fSizedInternalFormat = GR_GL_RG16F;
+        info.fInternalFormatForTexImage =
+                texImageSupportsSizedInternalFormat ? GR_GL_RG16F : GR_GL_RG;
+        info.fInternalFormatForRenderbuffer =
+                renderbufferStorageSupportsSizedInternalFormat ? GR_GL_RG16F : GR_GL_RG;
+        info.fDefaultExternalType = halfFloatType;
         if (rg16fTexturesSupported) {
             info.fFlags |= FormatInfo::kTextureable_Flag;
         }
@@ -2074,6 +2237,7 @@ void GrGLCaps::initFormatTable(const GrContextOptions& contextOptions,
             {
                 uint32_t flags = ColorTypeInfo::kUploadData_Flag;
                 info.fColorTypeInfos.emplace_back(GrColorType::kRG_F16, flags);
+                this->setColorTypeFormat(GrColorType::kRG_F16, GrGLFormat::kRG16F);
             }
         }
     }
@@ -2193,14 +2357,10 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
         }
     } // No WebGL support
 
-    fConfigTable[kUnknown_GrPixelConfig].fFormats.fBaseInternalFormat = 0;
-    fConfigTable[kUnknown_GrPixelConfig].fFormats.fSizedInternalFormat = 0;
     fConfigTable[kUnknown_GrPixelConfig].fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] = 0;
     fConfigTable[kUnknown_GrPixelConfig].fFormats.fExternalType = 0;
     fConfigTable[kUnknown_GrPixelConfig].fFormatType = kNormalizedFixedPoint_FormatType;
 
-    fConfigTable[kRGBA_8888_GrPixelConfig].fFormats.fBaseInternalFormat = GR_GL_RGBA;
-    fConfigTable[kRGBA_8888_GrPixelConfig].fFormats.fSizedInternalFormat = GR_GL_RGBA8;
     fConfigTable[kRGBA_8888_GrPixelConfig].fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] =
         GR_GL_RGBA;
     fConfigTable[kRGBA_8888_GrPixelConfig].fFormats.fExternalType = GR_GL_UNSIGNED_BYTE;
@@ -2218,8 +2378,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
         fConfigTable[kRGBA_8888_GrPixelConfig].fFlags |= allRenderFlags;
     }
 
-    fConfigTable[kRGB_888_GrPixelConfig].fFormats.fBaseInternalFormat = GR_GL_RGB;
-    fConfigTable[kRGB_888_GrPixelConfig].fFormats.fSizedInternalFormat = GR_GL_RGB8;
     // Our external RGB data always has a byte where alpha would be. When calling read pixels we
     // want to read to kRGB_888x color type and ensure that gets 0xFF written. Using GL_RGB would
     // read back unaligned 24bit RGB color values.
@@ -2254,8 +2412,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
     // uninitialized.
     fConfigTable[kRGB_888X_GrPixelConfig].fFlags = 0;
 
-    fConfigTable[kRG_88_GrPixelConfig].fFormats.fBaseInternalFormat = GR_GL_RG;
-    fConfigTable[kRG_88_GrPixelConfig].fFormats.fSizedInternalFormat = GR_GL_RG8;
     fConfigTable[kRG_88_GrPixelConfig].fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] =
         GR_GL_RG;
     fConfigTable[kRG_88_GrPixelConfig].fFormats.fExternalType = GR_GL_UNSIGNED_BYTE;
@@ -2272,15 +2428,11 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
     fConfigTable[kBGRA_8888_GrPixelConfig].fFormatType = kNormalizedFixedPoint_FormatType;
 
     if (GR_IS_GR_GL(standard)) {
-        fConfigTable[kBGRA_8888_GrPixelConfig].fFormats.fBaseInternalFormat = GR_GL_RGBA;
-        fConfigTable[kBGRA_8888_GrPixelConfig].fFormats.fSizedInternalFormat = GR_GL_RGBA8;
         if (version >= GR_GL_VER(1, 2) || ctxInfo.hasExtension("GL_EXT_bgra")) {
             // Since the internal format is RGBA8, it is also renderable.
             fConfigTable[kBGRA_8888_GrPixelConfig].fFlags = allRenderFlags;
         }
     } else if (GR_IS_GR_GL_ES(standard)) {
-        fConfigTable[kBGRA_8888_GrPixelConfig].fFormats.fBaseInternalFormat = GR_GL_BGRA;
-        fConfigTable[kBGRA_8888_GrPixelConfig].fFormats.fSizedInternalFormat = GR_GL_BGRA8;
         if (ctxInfo.hasExtension("GL_EXT_texture_format_BGRA8888")) {
             fConfigTable[kBGRA_8888_GrPixelConfig].fFlags = nonMSAARenderFlags;
 
@@ -2303,10 +2455,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
                 fConfigTable[kBGRA_8888_GrPixelConfig].fFlags = allRenderFlags;
             }
         }
-    } else if (GR_IS_GR_WEBGL(standard)) {
-        // Guess based on ES 2.0 support
-        fConfigTable[kBGRA_8888_GrPixelConfig].fFormats.fBaseInternalFormat = GR_GL_BGRA;
-        fConfigTable[kBGRA_8888_GrPixelConfig].fFormats.fSizedInternalFormat = GR_GL_BGRA8;
     }
 
     uint32_t srgbRenderFlags = allRenderFlags;
@@ -2314,8 +2462,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
         srgbRenderFlags &= ~ConfigInfo::kRenderableWithMSAA_Flag;
     }
 
-    fConfigTable[kSRGBA_8888_GrPixelConfig].fFormats.fBaseInternalFormat = GR_GL_SRGB_ALPHA;
-    fConfigTable[kSRGBA_8888_GrPixelConfig].fFormats.fSizedInternalFormat = GR_GL_SRGB8_ALPHA8;
     // GL does not do srgb<->rgb conversions when transferring between cpu and gpu. Thus, the
     // external format is GL_RGBA. See below for note about ES2.0 and glTex[Sub]Image.
     fConfigTable[kSRGBA_8888_GrPixelConfig].fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] =
@@ -2326,12 +2472,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
         fConfigTable[kSRGBA_8888_GrPixelConfig].fFlags = srgbRenderFlags;
     }
 
-    fConfigTable[kRGB_565_GrPixelConfig].fFormats.fBaseInternalFormat = GR_GL_RGB;
-    if (this->ES2CompatibilitySupport()) {
-        fConfigTable[kRGB_565_GrPixelConfig].fFormats.fSizedInternalFormat = GR_GL_RGB565;
-    } else {
-        fConfigTable[kRGB_565_GrPixelConfig].fFormats.fSizedInternalFormat = GR_GL_RGB5;
-    }
     fConfigTable[kRGB_565_GrPixelConfig].fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] =
         GR_GL_RGB;
     fConfigTable[kRGB_565_GrPixelConfig].fFormats.fExternalType = GR_GL_UNSIGNED_SHORT_5_6_5;
@@ -2346,8 +2486,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
         fConfigTable[kRGB_565_GrPixelConfig].fFlags |= allRenderFlags;
     }
 
-    fConfigTable[kRGBA_4444_GrPixelConfig].fFormats.fBaseInternalFormat = GR_GL_RGBA;
-    fConfigTable[kRGBA_4444_GrPixelConfig].fFormats.fSizedInternalFormat = GR_GL_RGBA4;
     fConfigTable[kRGBA_4444_GrPixelConfig].fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] =
         GR_GL_RGBA;
     fConfigTable[kRGBA_4444_GrPixelConfig].fFormats.fExternalType = GR_GL_UNSIGNED_SHORT_4_4_4_4;
@@ -2362,8 +2500,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
         fConfigTable[kRGBA_4444_GrPixelConfig].fFlags |= allRenderFlags;
     }
 
-    fConfigTable[kRGBA_1010102_GrPixelConfig].fFormats.fBaseInternalFormat = GR_GL_RGBA;
-    fConfigTable[kRGBA_1010102_GrPixelConfig].fFormats.fSizedInternalFormat = GR_GL_RGB10_A2;
     fConfigTable[kRGBA_1010102_GrPixelConfig].fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] =
         GR_GL_RGBA;
     fConfigTable[kRGBA_1010102_GrPixelConfig].fFormats.fExternalType =
@@ -2380,8 +2516,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
     ConfigInfo& alphaInfo = fConfigTable[kAlpha_8_as_Alpha_GrPixelConfig];
     alphaInfo.fFormats.fExternalType = GR_GL_UNSIGNED_BYTE;
     alphaInfo.fFormatType = kNormalizedFixedPoint_FormatType;
-    alphaInfo.fFormats.fBaseInternalFormat = GR_GL_ALPHA;
-    alphaInfo.fFormats.fSizedInternalFormat = GR_GL_ALPHA8;
     alphaInfo.fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] = GR_GL_ALPHA;
     alphaInfo.fRGBAReadSwizzle = GrSwizzle("000a");
     if (fAlpha8IsRenderable && alpha8IsValidForGL) {
@@ -2389,8 +2523,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
     }
 
     ConfigInfo& redInfo = fConfigTable[kAlpha_8_as_Red_GrPixelConfig];
-    redInfo.fFormats.fBaseInternalFormat = GR_GL_RED;
-    redInfo.fFormats.fSizedInternalFormat = GR_GL_R8;
     redInfo.fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] = GR_GL_RED;
     redInfo.fFormats.fExternalType = GR_GL_UNSIGNED_BYTE;
     redInfo.fFormatType = kNormalizedFixedPoint_FormatType;
@@ -2401,20 +2533,15 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
         fConfigTable[kAlpha_8_GrPixelConfig] = redInfo;
     } else {
         redInfo.fFlags = 0;
-
         fConfigTable[kAlpha_8_GrPixelConfig] = alphaInfo;
     }
 
     ConfigInfo& grayLumInfo = fConfigTable[kGray_8_as_Lum_GrPixelConfig];
-    grayLumInfo.fFormats.fBaseInternalFormat = GR_GL_LUMINANCE;
-    grayLumInfo.fFormats.fSizedInternalFormat = GR_GL_LUMINANCE8;
     grayLumInfo.fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] = GR_GL_LUMINANCE;
     grayLumInfo.fFormats.fExternalType = GR_GL_UNSIGNED_BYTE;
     grayLumInfo.fFormatType = kNormalizedFixedPoint_FormatType;
 
     ConfigInfo& grayRedInfo = fConfigTable[kGray_8_as_Red_GrPixelConfig];
-    grayRedInfo.fFormats.fBaseInternalFormat = GR_GL_RED;
-    grayRedInfo.fFormats.fSizedInternalFormat = GR_GL_R8;
     grayRedInfo.fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] = GR_GL_RED;
     grayRedInfo.fFormats.fExternalType = GR_GL_UNSIGNED_BYTE;
     grayRedInfo.fFormatType = kNormalizedFixedPoint_FormatType;
@@ -2486,9 +2613,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
     // We disable all texturing and rendering to F32 formats.
     for (auto fpconfig : {kRGBA_float_GrPixelConfig, kRG_float_GrPixelConfig}) {
         const GrGLenum format = kRGBA_float_GrPixelConfig == fpconfig ? GR_GL_RGBA : GR_GL_RG;
-        fConfigTable[fpconfig].fFormats.fBaseInternalFormat = format;
-        fConfigTable[fpconfig].fFormats.fSizedInternalFormat =
-            kRGBA_float_GrPixelConfig == fpconfig ? GR_GL_RGBA32F : GR_GL_RG32F;
         fConfigTable[fpconfig].fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] = format;
         fConfigTable[fpconfig].fFormats.fExternalType = GR_GL_FLOAT;
         fConfigTable[fpconfig].fFormatType = kFloat_FormatType;
@@ -2504,8 +2628,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
     ConfigInfo& redHalf = fConfigTable[kAlpha_half_as_Red_GrPixelConfig];
     redHalf.fFormats.fExternalType = redHalfExternalType;
     redHalf.fFormatType = kFloat_FormatType;
-    redHalf.fFormats.fBaseInternalFormat = GR_GL_RED;
-    redHalf.fFormats.fSizedInternalFormat = GR_GL_R16F;
     redHalf.fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] = GR_GL_RED;
     redHalf.fRGBAReadSwizzle = GrSwizzle("000r");
     if (textureRedSupport && hasFP16Textures) {
@@ -2515,8 +2637,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
     }
     fConfigTable[kAlpha_half_GrPixelConfig] = redHalf;
 
-    fConfigTable[kRGBA_half_GrPixelConfig].fFormats.fBaseInternalFormat = GR_GL_RGBA;
-    fConfigTable[kRGBA_half_GrPixelConfig].fFormats.fSizedInternalFormat = GR_GL_RGBA16F;
     fConfigTable[kRGBA_half_GrPixelConfig].fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] =
         GR_GL_RGBA;
     if (GR_IS_GR_GL(standard) ||
@@ -2544,21 +2664,10 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
 
     // No sized/unsized internal format distinction for compressed formats, no external format.
     // Below we set the external formats and types to 0.
-    fConfigTable[kRGB_ETC1_GrPixelConfig].fFormats.fBaseInternalFormat = GR_GL_COMPRESSED_RGB8_ETC2;
-    fConfigTable[kRGB_ETC1_GrPixelConfig].fFormats.fSizedInternalFormat =
-        GR_GL_COMPRESSED_RGB8_ETC2;
     fConfigTable[kRGB_ETC1_GrPixelConfig].fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage]
         = 0;
     fConfigTable[kRGB_ETC1_GrPixelConfig].fFormats.fExternalType = 0;
     fConfigTable[kRGB_ETC1_GrPixelConfig].fFormatType = kNormalizedFixedPoint_FormatType;
-    if (GR_IS_GR_GL_ES(standard)) {
-        if (ctxInfo.hasExtension("GL_OES_compressed_ETC1_RGB8_texture")) {
-            fConfigTable[kRGB_ETC1_GrPixelConfig].fFormats.fBaseInternalFormat =
-                GR_GL_COMPRESSED_ETC1_RGB8;
-            fConfigTable[kRGB_ETC1_GrPixelConfig].fFormats.fSizedInternalFormat =
-                GR_GL_COMPRESSED_ETC1_RGB8;
-        }
-    }
 
     // 16 bit formats
     {
@@ -2601,8 +2710,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
         {
             ConfigInfo& r16Info = fConfigTable[kR_16_GrPixelConfig];
 
-            r16Info.fFormats.fBaseInternalFormat = GR_GL_RED;
-            r16Info.fFormats.fSizedInternalFormat = GR_GL_R16;
             r16Info.fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] = GR_GL_RED;
             r16Info.fFormats.fExternalType = GR_GL_UNSIGNED_SHORT;
             r16Info.fFormatType = kNormalizedFixedPoint_FormatType;
@@ -2614,8 +2721,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
         {
             ConfigInfo& rg1616Info = fConfigTable[kRG_1616_GrPixelConfig];
 
-            rg1616Info.fFormats.fBaseInternalFormat = GR_GL_RG;
-            rg1616Info.fFormats.fSizedInternalFormat = GR_GL_RG16;
             rg1616Info.fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] = GR_GL_RG;
             rg1616Info.fFormats.fExternalType = GR_GL_UNSIGNED_SHORT;
             rg1616Info.fFormatType = kNormalizedFixedPoint_FormatType;
@@ -2628,8 +2733,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
         {
             ConfigInfo& rgba16161616Info = fConfigTable[kRGBA_16161616_GrPixelConfig];
 
-            rgba16161616Info.fFormats.fBaseInternalFormat = GR_GL_RGBA;
-            rgba16161616Info.fFormats.fSizedInternalFormat = GR_GL_RGBA16;
             rgba16161616Info.fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] = GR_GL_RGBA;
             rgba16161616Info.fFormats.fExternalType = GR_GL_UNSIGNED_SHORT;
             rgba16161616Info.fFormatType = kNormalizedFixedPoint_FormatType;
@@ -2661,8 +2764,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
 
         ConfigInfo& rgHalf = fConfigTable[kRG_half_GrPixelConfig];
 
-        rgHalf.fFormats.fBaseInternalFormat = GR_GL_RG;
-        rgHalf.fFormats.fSizedInternalFormat = GR_GL_RG16F;
         rgHalf.fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage] = GR_GL_RG;
         if (GR_IS_GR_GL(standard) || (GR_IS_GR_GL_ES(standard) && version >= GR_GL_VER(3, 0))) {
             rgHalf.fFormats.fExternalType = GR_GL_HALF_FLOAT;
@@ -2675,37 +2776,11 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
         }
     }
 
-    // ES 2.0 requires that the internal/external formats match.
-    bool useSizedTexFormats = (GR_IS_GR_GL(standard) ||
-                              (GR_IS_GR_GL_ES(standard) && version >= GR_GL_VER(3,0)));
-    // All ES versions (thus far) require sized internal formats for render buffers.
-    // TODO: Always use sized internal format?
-    bool useSizedRbFormats = GR_IS_GR_GL_ES(standard) || GR_IS_GR_WEBGL(standard);
-
     for (int i = 0; i < kGrPixelConfigCnt; ++i) {
         // Almost always we want to pass fExternalFormat[kReadPixels_ExternalFormatUsage] as the
         // <format> param to glTex[Sub]Image.
         fConfigTable[i].fFormats.fExternalFormat[kTexImage_ExternalFormatUsage] =
             fConfigTable[i].fFormats.fExternalFormat[kReadPixels_ExternalFormatUsage];
-        fConfigTable[i].fFormats.fInternalFormatTexImage = useSizedTexFormats ?
-            fConfigTable[i].fFormats.fSizedInternalFormat :
-            fConfigTable[i].fFormats.fBaseInternalFormat;
-        fConfigTable[i].fFormats.fInternalFormatRenderbuffer = useSizedRbFormats ?
-            fConfigTable[i].fFormats.fSizedInternalFormat :
-            fConfigTable[i].fFormats.fBaseInternalFormat;
-    }
-    // If we're on ES 3.0+ but because of a driver workaround selected GL_ALPHA to implement the
-    // kAlpha_8_GrPixelConfig then we actually have to use a base internal format rather than a
-    // sized internal format. This is because there is no valid 8 bit alpha sized internal format
-    // in ES.
-    if (useSizedTexFormats && GR_IS_GR_GL_ES(standard) && !textureRedSupport) {
-        SkASSERT(fConfigTable[kAlpha_8_GrPixelConfig].fFormats.fBaseInternalFormat == GR_GL_ALPHA8);
-        SkASSERT(fConfigTable[kAlpha_8_as_Alpha_GrPixelConfig].fFormats.fBaseInternalFormat ==
-                     GR_GL_ALPHA8);
-        fConfigTable[kAlpha_8_GrPixelConfig].fFormats.fInternalFormatTexImage =
-            fConfigTable[kAlpha_8_GrPixelConfig].fFormats.fBaseInternalFormat;
-        fConfigTable[kAlpha_8_as_Alpha_GrPixelConfig].fFormats.fInternalFormatTexImage =
-            fConfigTable[kAlpha_8_as_Alpha_GrPixelConfig].fFormats.fBaseInternalFormat;
     }
 
     // OpenGL ES 2.0 + GL_EXT_sRGB allows GL_SRGB_ALPHA to be specified as the <format>
@@ -2724,26 +2799,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
     fConfigTable[kRGB_888_GrPixelConfig].fFormats.fExternalFormat[kTexImage_ExternalFormatUsage] =
         GR_GL_RGB;
 
-    // If BGRA is supported as an internal format it must always be specified to glTex[Sub]Image
-    // as a base format.
-    // GL_EXT_texture_format_BGRA8888:
-    //      This extension GL_BGRA as an unsized internal format. However, it is written against ES
-    //      2.0 and therefore doesn't define a value for GL_BGRA8 as ES 2.0 uses unsized internal
-    //      formats.
-    // GL_APPLE_texture_format_BGRA8888:
-    //     ES 2.0: the extension makes BGRA an external format but not an internal format.
-    //     ES 3.0: the extension explicitly states GL_BGRA8 is not a valid internal format for
-    //             glTexImage (just for glTexStorage).
-    if (useSizedTexFormats && this->bgraIsInternalFormat()) {
-        if (ctxInfo.hasExtension("GL_APPLE_texture_format_BGRA8888")) {
-            fConfigTable[kBGRA_8888_GrPixelConfig].fFormats.fInternalFormatTexImage = GR_GL_RGBA;
-            fConfigTable[kBGRA_8888_GrPixelConfig].fFormats.fInternalFormatRenderbuffer =
-                GR_GL_RGBA8;
-        } else {
-            fConfigTable[kBGRA_8888_GrPixelConfig].fFormats.fInternalFormatTexImage = GR_GL_BGRA;
-        }
-    }
-
     for (int i = 0; i < kGrPixelConfigCnt; ++i) {
         if (ConfigInfo::kRenderableWithMSAA_Flag & fConfigTable[i].fFlags) {
             // We assume that MSAA rendering is supported only if we support non-MSAA rendering.
@@ -2753,7 +2808,8 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
                    ctxInfo.hasExtension("GL_ARB_internalformat_query"))) ||
                 (GR_IS_GR_GL_ES(standard) && version >= GR_GL_VER(3,0))) {
                 int count;
-                GrGLenum format = fConfigTable[i].fFormats.fInternalFormatRenderbuffer;
+                GrGLFormat grGLFormat = this->pixelConfigToFormat((GrPixelConfig)i);
+                GrGLenum format = this->getRenderbufferInternalFormat(grGLFormat);
                 GR_GL_GetInternalformativ(gli, GR_GL_RENDERBUFFER, format, GR_GL_NUM_SAMPLE_COUNTS,
                                           1, &count);
                 if (count) {
@@ -2813,10 +2869,6 @@ void GrGLCaps::initConfigTable(const GrContextOptions& contextOptions,
         SkASSERT(!((fConfigTable[i].fFlags & ConfigInfo::kRenderableWithMSAA_Flag) &&
                   !(fConfigTable[i].fFlags & ConfigInfo::kRenderable_Flag)));
 
-        SkASSERT(defaultEntry.fFormats.fBaseInternalFormat !=
-                 fConfigTable[i].fFormats.fBaseInternalFormat);
-        SkASSERT(defaultEntry.fFormats.fSizedInternalFormat !=
-                 fConfigTable[i].fFormats.fSizedInternalFormat);
         for (int j = 0; j < kExternalFormatUsageCnt; ++j) {
             SkASSERT(defaultEntry.fFormats.fExternalFormat[j] !=
                      fConfigTable[i].fFormats.fExternalFormat[j]);
@@ -3065,7 +3117,6 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
     if (kAdreno430_GrGLRenderer == ctxInfo.renderer() ||
         kAdreno4xx_other_GrGLRenderer == ctxInfo.renderer() ||
         fDriverBugWorkarounds.disable_discard_framebuffer) {
-        fDiscardRenderTargetSupport = false;
         fInvalidateFBType = kNone_InvalidateFBType;
     }
 
@@ -3415,7 +3466,6 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
 #endif
         (kNVIDIA_GrGLDriver == ctxInfo.driver() ||
          kChromium_GrGLDriver == ctxInfo.driver())) {
-            fDiscardRenderTargetSupport = false;
             fInvalidateFBType = kNone_InvalidateFBType;
     }
 
@@ -3567,6 +3617,8 @@ GrCaps::SupportedRead GrGLCaps::supportedReadPixelsColorType(GrPixelConfig srcPi
                 GrColorTypeHasAlpha(dstColorType)) {
                 // This can skip an unnecessary conversion.
                 return {swizzle, GrColorType::kRGB_888x};
+            } else if (kSRGBA_8888_GrPixelConfig == srcPixelConfig) {
+                return {swizzle, GrColorType::kRGBA_8888_SRGB};
             }
             return {swizzle, GrColorType::kRGBA_8888};
         case kFloat_FormatType:
@@ -3582,48 +3634,24 @@ bool GrGLCaps::onIsWindowRectanglesSupportedForRT(const GrBackendRenderTarget& b
     return fbInfo.fFBOID != 0;
 }
 
-static bool format_is_srgb(GrGLenum format) {
-    SkASSERT(GrGLFormatIsSupported(format));
-
-    switch (format) {
-        case GR_GL_SRGB8_ALPHA8:
-            return true;
-        default:
-            return false;
-    }
-}
-
 bool GrGLCaps::isFormatSRGB(const GrBackendFormat& format) const {
-    if (!format.getGLFormat()) {
-        return false;
-    }
-
-    return format_is_srgb(*format.getGLFormat());
+    return GrGLBackendFormatToGLFormat(format) == GrGLFormat::kSRGB8_ALPHA8;
 }
 
-bool GrGLCaps::isGLFormatTexturable(GrColorType ct, GrGLenum glFormat) const {
-    if (!GrGLFormatIsSupported(glFormat)) {
-        return false;
-    }
-    const FormatInfo& info = this->getFormatInfo(glFormat);
+bool GrGLCaps::isFormatTexturable(GrColorType ct, GrGLFormat format) const {
+    const FormatInfo& info = this->getFormatInfo(format);
     // Currently we conflate texturable to mean the format itself is texturable in a draw and that
     // we are able to upload data of the passed in colortype to it.
     return SkToBool(info.fFlags & FormatInfo::kTextureable_Flag) &&
            SkToBool(info.colorTypeFlags(ct) & ColorTypeInfo::kUploadData_Flag);
 }
 
-bool GrGLCaps::isFormatTexturable(SkColorType ct, const GrBackendFormat& format) const {
-    const GrGLenum* glFormat = format.getGLFormat();
-    if (!glFormat) {
-        return false;
-    }
-    GrColorType grCT = SkColorTypeToGrColorType(ct);
-    return this->isGLFormatTexturable(grCT, *glFormat);
+bool GrGLCaps::isFormatTexturable(GrColorType ct, const GrBackendFormat& format) const {
+    return this->isFormatTexturable(ct, GrGLBackendFormatToGLFormat(format));
 }
 
-int GrGLCaps::getRenderTargetSampleCount(int requestedCount, SkColorType skCT,
+int GrGLCaps::getRenderTargetSampleCount(int requestedCount, GrColorType grCT,
                                          const GrBackendFormat& format) const {
-    GrColorType grCT = SkColorTypeToGrColorType(skCT);
     if (GrColorType::kUnknown == grCT) {
         return 0;
     }
@@ -3659,8 +3687,7 @@ int GrGLCaps::getRenderTargetSampleCount(int requestedCount, GrPixelConfig confi
     return 0;
 }
 
-int GrGLCaps::maxRenderTargetSampleCount(SkColorType skCT, const GrBackendFormat& format) const {
-    GrColorType grCT = SkColorTypeToGrColorType(skCT);
+int GrGLCaps::maxRenderTargetSampleCount(GrColorType grCT, const GrBackendFormat& format) const {
     if (GrColorType::kUnknown == grCT) {
         return 0;
     }
@@ -3685,31 +3712,66 @@ int GrGLCaps::maxRenderTargetSampleCount(GrPixelConfig config) const {
     return count;
 }
 
-bool GrGLCaps::canGLFormatBeFBOColorAttachment(GrGLenum glFormat) const {
-    if (!GrGLFormatIsSupported(glFormat)) {
-        return false;
-    }
-    return SkToBool(this->getFormatInfo(glFormat).fFlags & FormatInfo::kFBOColorAttachment_Flag);
+bool GrGLCaps::canFormatBeFBOColorAttachment(GrGLFormat format) const {
+    return SkToBool(this->getFormatInfo(format).fFlags & FormatInfo::kFBOColorAttachment_Flag);
 }
 
-bool GrGLCaps::isFormatCopyable(SkColorType ct, const GrBackendFormat& format) const {
-    const GrGLenum* glFormat = format.getGLFormat();
-    if (!glFormat || !GrGLFormatIsSupported(*glFormat)) {
-        return false;
-    }
+bool GrGLCaps::isFormatCopyable(GrColorType ct, const GrBackendFormat& format) const {
     // In GL we have three ways to be able to copy. CopyTexImage, blit, and draw. CopyTexImage
     // requires the src to be an FBO attachment, blit requires both src and dst to be FBO
     // attachments, and draw requires the dst to be an FBO attachment. Thus to copy from and to
     // the same config, we need that config to be bindable to an FBO.
-    return this->canGLFormatBeFBOColorAttachment(*glFormat);
+    return this->canFormatBeFBOColorAttachment(GrGLBackendFormatToGLFormat(format));
 }
 
-bool GrGLCaps::glFormatSupportsTexStorage(GrGLenum glFormat) const {
-    if (!GrGLFormatIsSupported(glFormat)) {
-        return false;
-    }
+bool GrGLCaps::formatSupportsTexStorage(GrGLFormat format) const {
+    return SkToBool(this->getFormatInfo(format).fFlags & FormatInfo::kCanUseTexStorage_Flag);
+}
 
-    return SkToBool(this->getFormatInfo(glFormat).fFlags & FormatInfo::kCanUseTexStorage_Flag);
+GrGLFormat GrGLCaps::pixelConfigToFormat(GrPixelConfig config) const {
+    switch (config) {
+        case kRGB_888X_GrPixelConfig:
+            return GrGLFormat::kRGBA8;
+        case kAlpha_8_as_Alpha_GrPixelConfig:
+            return GrGLFormat::kALPHA8;
+        case kAlpha_8_as_Red_GrPixelConfig:
+            return GrGLFormat::kR8;
+        case kGray_8_as_Lum_GrPixelConfig:
+            return GrGLFormat::kLUMINANCE8;
+        case kGray_8_as_Red_GrPixelConfig:
+            return GrGLFormat::kR8;
+        case kAlpha_half_as_Red_GrPixelConfig:
+            return GrGLFormat::kR16F;
+        case kRGB_ETC1_GrPixelConfig: {
+            auto info = this->getFormatInfo(GrGLFormat::kCOMPRESSED_ETC1_RGB8);
+            bool usesETC1 = SkToBool(info.fFlags & FormatInfo::kTextureable_Flag);
+            return usesETC1 ? GrGLFormat::kCOMPRESSED_ETC1_RGB8
+                            : GrGLFormat::kCOMPRESSED_RGB8_ETC2;
+        }
+        case kUnknown_GrPixelConfig:
+        case kAlpha_8_GrPixelConfig:
+        case kGray_8_GrPixelConfig:
+        case kRGB_565_GrPixelConfig:
+        case kRGBA_4444_GrPixelConfig:
+        case kRGBA_8888_GrPixelConfig:
+        case kRGB_888_GrPixelConfig:
+        case kRG_88_GrPixelConfig:
+        case kBGRA_8888_GrPixelConfig:
+        case kSRGBA_8888_GrPixelConfig:
+        case kRGBA_1010102_GrPixelConfig:
+        case kRGBA_float_GrPixelConfig:
+        case kRG_float_GrPixelConfig:
+        case kAlpha_half_GrPixelConfig:
+        case kRGBA_half_GrPixelConfig:
+        case kRGBA_half_Clamped_GrPixelConfig:
+        case kR_16_GrPixelConfig:
+        case kRG_1616_GrPixelConfig:
+        case kRGBA_16161616_GrPixelConfig:
+        case kRG_half_GrPixelConfig:
+            return this->getFormatFromColorType(GrPixelConfigToColorType(config));
+    }
+    SkUNREACHABLE;
+    return GrGLFormat::kUnknown;
 }
 
 // A near clone of format_color_type_valid_pair
@@ -3737,7 +3799,10 @@ GrPixelConfig validate_sized_format(GrGLenum format, GrColorType ct, GrGLStandar
         case GrColorType::kRGBA_8888:
             if (GR_GL_RGBA8 == format) {
                 return kRGBA_8888_GrPixelConfig;
-            } else if (GR_GL_SRGB8_ALPHA8 == format) {
+            }
+            break;
+        case GrColorType::kRGBA_8888_SRGB:
+            if (GR_GL_SRGB8_ALPHA8 == format) {
                 return kSRGBA_8888_GrPixelConfig;
             }
             break;
@@ -3836,8 +3901,8 @@ GrPixelConfig GrGLCaps::validateBackendRenderTarget(const GrBackendRenderTarget&
     return validate_sized_format(fbInfo.fFormat, ct, fStandard);
 }
 
-bool GrGLCaps::areColorTypeAndFormatCompatible(GrColorType ct,
-                                               const GrBackendFormat& format) const {
+bool GrGLCaps::onAreColorTypeAndFormatCompatible(GrColorType ct,
+                                                 const GrBackendFormat& format) const {
     const GrGLenum* glFormat = format.getGLFormat();
     if (!glFormat) {
         return false;
@@ -3846,8 +3911,8 @@ bool GrGLCaps::areColorTypeAndFormatCompatible(GrColorType ct,
     return kUnknown_GrPixelConfig != validate_sized_format(*glFormat, ct, fStandard);
 }
 
-GrPixelConfig GrGLCaps::getConfigFromBackendFormat(const GrBackendFormat& format,
-                                                   GrColorType ct) const {
+GrPixelConfig GrGLCaps::onGetConfigFromBackendFormat(const GrBackendFormat& format,
+                                                     GrColorType ct) const {
     const GrGLenum* glFormat = format.getGLFormat();
     if (!glFormat) {
         return kUnknown_GrPixelConfig;
@@ -3909,13 +3974,12 @@ GrPixelConfig GrGLCaps::getYUVAConfigFromBackendFormat(const GrBackendFormat& fo
     return get_yuva_config(*glFormat);
 }
 
-GrBackendFormat GrGLCaps::getBackendFormatFromGrColorType(GrColorType ct,
-                                                          GrSRGBEncoded srgbEncoded) const {
-    GrPixelConfig config = GrColorTypeToPixelConfig(ct, srgbEncoded);
-    if (config == kUnknown_GrPixelConfig) {
+GrBackendFormat GrGLCaps::getBackendFormatFromColorType(GrColorType ct) const {
+    auto format = this->getFormatFromColorType(ct);
+    if (format == GrGLFormat::kUnknown) {
         return GrBackendFormat();
     }
-    return GrBackendFormat::MakeGL(this->configSizedInternalFormat(config), GR_GL_TEXTURE_2D);
+    return GrBackendFormat::MakeGL(this->getSizedInternalFormat(format), GR_GL_TEXTURE_2D);
 }
 
 GrBackendFormat GrGLCaps::getBackendFormatFromCompressionType(
@@ -3940,7 +4004,9 @@ static bool format_color_type_valid_pair(GrGLenum format, GrColorType colorType)
         case GrColorType::kABGR_4444:
             return GR_GL_RGBA4 == format;
         case GrColorType::kRGBA_8888:
-            return GR_GL_RGBA8 == format || GR_GL_SRGB8_ALPHA8 == format;
+            return GR_GL_RGBA8 == format;
+        case GrColorType::kRGBA_8888_SRGB:
+            return GR_GL_SRGB8_ALPHA8 == format;
         case GrColorType::kRGB_888x:
             GR_STATIC_ASSERT(GrCompressionTypeClosestColorType(SkImage::kETC1_CompressionType) ==
                              GrColorType::kRGB_888x);
@@ -4043,7 +4109,7 @@ size_t GrGLCaps::onTransferFromOffsetAlignment(GrColorType bufferColorType) cons
     if (GrColorType::kRGB_888x == bufferColorType) {
         return 0;
     }
-    auto config = GrColorTypeToPixelConfig(bufferColorType, GrSRGBEncoded::kNo);
+    auto config = GrColorTypeToPixelConfig(bufferColorType);
     // This switch is derived from a table titled "Pixel data type parameter values and the
     // corresponding GL data types" in the OpenGL spec (Table 8.2 in OpenGL 4.5).
     switch (fConfigTable[config].fFormats.fExternalType) {
