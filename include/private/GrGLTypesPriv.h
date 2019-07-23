@@ -29,7 +29,6 @@ enum class GrGLFormat {
     kRGB10_A2,
     kRGBA4,
     kRGBA32F,
-    kRG32F,
     kSRGB8_ALPHA8,
     kCOMPRESSED_RGB8_ETC2,
     kCOMPRESSED_ETC1_RGB8,
@@ -37,8 +36,9 @@ enum class GrGLFormat {
     kRG16,
     kRGBA16,
     kRG16F,
+    kLUMINANCE16F,
 
-    kLast = kRG16F
+    kLast = kLUMINANCE16F
 };
 
 static constexpr int kGrGLFormatCount = static_cast<int>(GrGLFormat::kLast) + 1;

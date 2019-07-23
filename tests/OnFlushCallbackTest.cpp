@@ -307,7 +307,6 @@ public:
                 [](GrResourceProvider* resourceProvider)
                         -> GrSurfaceProxy::LazyInstantiationResult {
                     GrSurfaceDesc desc;
-                    desc.fFlags = kRenderTarget_GrSurfaceFlag;
                     // TODO: until partial flushes in MDB lands we're stuck having
                     // all 9 atlas draws occur
                     desc.fWidth = 9 /*this->numOps()*/ * kAtlasTileSize;
@@ -315,11 +314,13 @@ public:
                     desc.fConfig = kRGBA_8888_GrPixelConfig;
 
                     auto texture = resourceProvider->createTexture(
-                            desc, SkBudgeted::kYes, GrResourceProvider::Flags::kNoPendingIO);
+                            desc, GrRenderable::kYes, SkBudgeted::kYes, GrProtected::kNo,
+                            GrResourceProvider::Flags::kNoPendingIO);
                     return std::move(texture);
                 },
                 format,
                 GrProxyProvider::Renderable::kYes,
+                GrProtected::kNo,
                 kBottomLeft_GrSurfaceOrigin,
                 kRGBA_8888_GrPixelConfig,
                 *proxyProvider->caps());

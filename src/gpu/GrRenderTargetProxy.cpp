@@ -23,12 +23,13 @@ GrRenderTargetProxy::GrRenderTargetProxy(const GrCaps& caps, const GrBackendForm
                                          const GrSurfaceDesc& desc, GrSurfaceOrigin origin,
                                          const GrSwizzle& textureSwizzle,
                                          const GrSwizzle& outputSwizzle, SkBackingFit fit,
-                                         SkBudgeted budgeted, GrInternalSurfaceFlags surfaceFlags)
-        : INHERITED(format, desc, origin, textureSwizzle, fit, budgeted, surfaceFlags)
+                                         SkBudgeted budgeted, GrProtected isProtected,
+                                         GrInternalSurfaceFlags surfaceFlags)
+        : INHERITED(format, desc, GrRenderable::kYes, origin, textureSwizzle, fit, budgeted,
+                    isProtected, surfaceFlags)
         , fSampleCnt(desc.fSampleCnt)
         , fWrapsVkSecondaryCB(WrapsVkSecondaryCB::kNo)
-        , fOutputSwizzle(outputSwizzle) {
-}
+        , fOutputSwizzle(outputSwizzle) {}
 
 // Lazy-callback version
 GrRenderTargetProxy::GrRenderTargetProxy(LazyInstantiateCallback&& callback,
@@ -36,15 +37,14 @@ GrRenderTargetProxy::GrRenderTargetProxy(LazyInstantiateCallback&& callback,
                                          const GrBackendFormat& format, const GrSurfaceDesc& desc,
                                          GrSurfaceOrigin origin, const GrSwizzle& textureSwizzle,
                                          const GrSwizzle& outputSwizzle, SkBackingFit fit,
-                                         SkBudgeted budgeted, GrInternalSurfaceFlags surfaceFlags,
+                                         SkBudgeted budgeted, GrProtected isProtected,
+                                         GrInternalSurfaceFlags surfaceFlags,
                                          WrapsVkSecondaryCB wrapsVkSecondaryCB)
-        : INHERITED(std::move(callback), lazyType, format, desc, origin, textureSwizzle, fit,
-                    budgeted, surfaceFlags)
+        : INHERITED(std::move(callback), lazyType, format, desc, GrRenderable::kYes, origin,
+                    textureSwizzle, fit, budgeted, isProtected, surfaceFlags)
         , fSampleCnt(desc.fSampleCnt)
         , fWrapsVkSecondaryCB(wrapsVkSecondaryCB)
-        , fOutputSwizzle(outputSwizzle) {
-    SkASSERT(SkToBool(kRenderTarget_GrSurfaceFlag & desc.fFlags));
-}
+        , fOutputSwizzle(outputSwizzle) {}
 
 // Wrapped version
 GrRenderTargetProxy::GrRenderTargetProxy(sk_sp<GrSurface> surf, GrSurfaceOrigin origin,
@@ -65,9 +65,7 @@ bool GrRenderTargetProxy::instantiate(GrResourceProvider* resourceProvider) {
     if (LazyState::kNot != this->lazyInstantiationState()) {
         return false;
     }
-    static constexpr GrSurfaceDescFlags kDescFlags = kRenderTarget_GrSurfaceFlag;
-
-    if (!this->instantiateImpl(resourceProvider, fSampleCnt, fNumStencilSamples, kDescFlags,
+    if (!this->instantiateImpl(resourceProvider, fSampleCnt, fNumStencilSamples, GrRenderable::kYes,
                                GrMipMapped::kNo, nullptr)) {
         return false;
     }
@@ -87,10 +85,8 @@ bool GrRenderTargetProxy::canChangeStencilAttachment() const {
 }
 
 sk_sp<GrSurface> GrRenderTargetProxy::createSurface(GrResourceProvider* resourceProvider) const {
-    static constexpr GrSurfaceDescFlags kDescFlags = kRenderTarget_GrSurfaceFlag;
-
     sk_sp<GrSurface> surface = this->createSurfaceImpl(
-            resourceProvider, fSampleCnt, fNumStencilSamples, kDescFlags, GrMipMapped::kNo);
+            resourceProvider, fSampleCnt, fNumStencilSamples, GrRenderable::kYes, GrMipMapped::kNo);
     if (!surface) {
         return nullptr;
     }

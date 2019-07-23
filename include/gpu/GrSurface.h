@@ -75,7 +75,8 @@ public:
     inline GrSurfacePriv surfacePriv();
     inline const GrSurfacePriv surfacePriv() const;
 
-    static size_t WorstCaseSize(const GrSurfaceDesc& desc, bool binSize = false);
+    static size_t WorstCaseSize(const GrSurfaceDesc& desc, GrRenderable renderable,
+                                bool binSize = false);
     static size_t ComputeSize(GrPixelConfig config, int width, int height, int colorSamplesPerPixel,
                               GrMipMapped, bool binSize = false);
 
@@ -110,14 +111,13 @@ protected:
     // Provides access to methods that should be public within Skia code.
     friend class GrSurfacePriv;
 
-    GrSurface(GrGpu* gpu, const GrSurfaceDesc& desc)
+    GrSurface(GrGpu* gpu, const GrSurfaceDesc& desc, GrProtected isProtected)
             : INHERITED(gpu)
             , fConfig(desc.fConfig)
             , fWidth(desc.fWidth)
             , fHeight(desc.fHeight)
             , fSurfaceFlags(GrInternalSurfaceFlags::kNone)
-            , fIsProtected(desc.fIsProtected) {
-    }
+            , fIsProtected(isProtected) {}
 
     ~GrSurface() override {
         // check that invokeReleaseProc has been called (if needed)

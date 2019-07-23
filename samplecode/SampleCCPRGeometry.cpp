@@ -44,8 +44,7 @@ static constexpr float kDebugBloat = 40;
  * geometry processors.
  */
 class CCPRGeometryView : public Sample {
-public:
-    CCPRGeometryView() { this->updateGpuData(); }
+    void onOnceBeforeDraw() override { this->updateGpuData(); }
     void onDrawContent(SkCanvas*) override;
 
     Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, ModifierKey) override;
@@ -53,7 +52,6 @@ public:
     bool onChar(SkUnichar) override;
     SkString name() override { return SkString("CCPRGeometry"); }
 
-private:
     class Click;
     class DrawCoverageCountOp;
     class VisualizeCoverageCountFP;
@@ -76,8 +74,6 @@ private:
     SkTArray<TriPointInstance> fTriPointInstances;
     SkTArray<QuadPointInstance> fQuadPointInstances;
     SkPath fPath;
-
-    typedef Sample INHERITED;
 };
 
 class CCPRGeometryView::DrawCoverageCountOp : public GrDrawOp {
@@ -305,7 +301,9 @@ void CCPRGeometryView::updateGpuData() {
             SkASSERT(Verb::kMonotonicQuadraticTo == verb || Verb::kMonotonicConicTo == verb);
             if (PrimitiveType::kQuadratics == fPrimitiveType &&
                 Verb::kMonotonicQuadraticTo == verb) {
-                fTriPointInstances.push_back().set(&geometry.points()[ptsIdx], Sk2f(0, 0));
+                fTriPointInstances.push_back().set(
+                        &geometry.points()[ptsIdx], Sk2f(0, 0),
+                        TriPointInstance::Ordering::kXYTransposed);
             } else if (PrimitiveType::kConics == fPrimitiveType &&
                        Verb::kMonotonicConicTo == verb) {
                 fQuadPointInstances.push_back().setW(&geometry.points()[ptsIdx], Sk2f(0, 0),
@@ -314,7 +312,9 @@ void CCPRGeometryView::updateGpuData() {
             ptsIdx += 2;
         }
     } else {
-        fTriPointInstances.push_back().set(fPoints[0], fPoints[1], fPoints[3], Sk2f(0, 0));
+        fTriPointInstances.push_back().set(
+                fPoints[0], fPoints[1], fPoints[3], Sk2f(0, 0),
+                TriPointInstance::Ordering::kXYTransposed);
         fPath.lineTo(fPoints[1]);
         fPath.lineTo(fPoints[3]);
         fPath.close();

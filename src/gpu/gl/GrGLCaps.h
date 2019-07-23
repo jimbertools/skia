@@ -118,12 +118,26 @@ public:
         return this->isFormatTexturable(ct, format);
     }
 
-    int getRenderTargetSampleCount(int requestedCount,
-                                   GrColorType, const GrBackendFormat&) const override;
-    int getRenderTargetSampleCount(int requestedCount, GrPixelConfig config) const override;
+    int getRenderTargetSampleCount(int requestedCount, GrColorType ct,
+                                   const GrBackendFormat& format) const override {
+        return this->getRenderTargetSampleCount(requestedCount, ct,
+                                                GrGLBackendFormatToGLFormat(format));
+    }
+    int getRenderTargetSampleCount(int requestedCount, GrPixelConfig config) const override {
+        GrColorType ct = GrPixelConfigToColorType(config);
+        auto format = this->pixelConfigToFormat(config);
+        return this->getRenderTargetSampleCount(requestedCount, ct, format);
 
-    int maxRenderTargetSampleCount(GrColorType, const GrBackendFormat&) const override;
-    int maxRenderTargetSampleCount(GrPixelConfig config) const override;
+    }
+
+    int maxRenderTargetSampleCount(GrColorType ct, const GrBackendFormat& format) const override {
+        return this->maxRenderTargetSampleCount(ct, GrGLBackendFormatToGLFormat(format));
+    }
+    int maxRenderTargetSampleCount(GrPixelConfig config) const override {
+        GrColorType ct = GrPixelConfigToColorType(config);
+        auto format = this->pixelConfigToFormat(config);
+        return this->maxRenderTargetSampleCount(ct, format);
+    }
 
     bool isFormatCopyable(GrColorType, const GrBackendFormat&) const override;
     bool isConfigCopyable(GrPixelConfig config) const override {
@@ -230,20 +244,18 @@ public:
     void setStencilFormatIndexForFormat(GrGLFormat, int index);
 
     /**
-     * Call to note that a color config has been verified as a valid color
-     * attachment. This may save future calls to glCheckFramebufferStatus
-     * using isConfigVerifiedColorAttachment().
+     * Call to note that a GrGLFormat has been verified as a valid color attachment. This may save
+     * future calls to glCheckFramebufferStatus using isFormatVerifiedColorAttachment().
      */
-    void markConfigAsValidColorAttachment(GrPixelConfig config) {
-        fConfigTable[config].fVerifiedColorAttachment = true;
+    void markFormatAsValidColorAttachment(GrGLFormat format) {
+        this->getFormatInfo(format).fVerifiedColorAttachment = true;
     }
 
     /**
-     * Call to check whether a config has been verified as a valid color
-     * attachment.
+     * Call to check whether a format has been verified as a valid color attachment.
      */
-    bool isConfigVerifiedColorAttachment(GrPixelConfig config) const {
-        return fConfigTable[config].fVerifiedColorAttachment;
+    bool isFormatVerifiedColorAttachment(GrGLFormat format) const {
+        return this->getFormatInfo(format).fVerifiedColorAttachment;
     }
 
     /**
@@ -334,15 +346,8 @@ public:
     bool useNonVBOVertexAndIndexDynamicData() const { return fUseNonVBOVertexAndIndexDynamicData; }
 
     SurfaceReadPixelsSupport surfaceSupportsReadPixels(const GrSurface*) const override;
-    SupportedRead supportedReadPixelsColorType(GrPixelConfig, const GrBackendFormat&,
+    SupportedRead supportedReadPixelsColorType(GrColorType, const GrBackendFormat&,
                                                GrColorType) const override;
-
-    /// Does ReadPixels support reading readConfig pixels from a FBO that is surfaceConfig?
-    bool readPixelsSupported(GrPixelConfig surfaceConfig,
-                             GrPixelConfig readConfig,
-                             std::function<void (GrGLenum, GrGLint*)> getIntegerv,
-                             std::function<bool ()> bindRenderTarget,
-                             std::function<void ()> unbindRenderTarget) const;
 
     bool isCoreProfile() const { return fIsCoreProfile; }
 
@@ -427,8 +432,7 @@ public:
                        const SkIRect& srcRect, const SkIPoint& dstPoint) const;
     bool canCopyAsDraw(GrPixelConfig dstConfig, bool srcIsTextureable) const;
 
-    bool initDescForDstCopy(const GrRenderTargetProxy* src, GrSurfaceDesc* desc,
-                            bool* rectsMustMatch, bool* disallowSubrect) const override;
+    DstCopyRestrictions getDstCopyRestrictions(const GrRenderTargetProxy* src) const override;
 
     bool programBinarySupport() const { return fProgramBinarySupport; }
     bool programParameterSupport() const { return fProgramParameterSupport; }
@@ -444,6 +448,8 @@ public:
 
     GrBackendFormat getBackendFormatFromColorType(GrColorType ct) const override;
     GrBackendFormat getBackendFormatFromCompressionType(SkImage::CompressionType) const override;
+
+    bool canClearTextureOnCreation() const override;
 
     GrSwizzle getTextureSwizzle(const GrBackendFormat&, GrColorType) const override;
     GrSwizzle getOutputSwizzle(const GrBackendFormat&, GrColorType) const override;
@@ -475,6 +481,7 @@ private:
         bool fDisableNonRedSingleChannelTexStorageForANGLEGL = false;
         bool fDisableBGRATextureStorageForIntelWindowsES = false;
         bool fDisableRGB8ForMali400 = false;
+        bool fDisableLuminance16F = false;
     };
 
     void applyDriverCorrectnessWorkarounds(const GrGLContextInfo&, const GrContextOptions&,
@@ -490,8 +497,8 @@ private:
     void initStencilSupport(const GrGLContextInfo&);
     // This must be called after initFSAASupport().
     void initConfigTable(const GrContextOptions&, const GrGLContextInfo&, const GrGLInterface*);
-    void initFormatTable(const GrContextOptions&, const GrGLContextInfo&, const GrGLInterface*,
-                         const FormatWorkarounds&);
+    void initFormatTable(const GrGLContextInfo&, const GrGLInterface*, const FormatWorkarounds&);
+    void setupSampleCounts(const GrGLContextInfo&, const GrGLInterface*);
     bool onSurfaceSupportsWritePixels(const GrSurface*) const override;
     bool onCanCopySurface(const GrSurfaceProxy* dst, const GrSurfaceProxy* src,
                           const SkIRect& srcRect, const SkIPoint& dstPoint) const override;
@@ -501,6 +508,9 @@ private:
 
     bool isFormatTexturable(GrColorType, GrGLFormat) const;
     bool formatSupportsTexStorage(GrGLFormat) const;
+
+    int getRenderTargetSampleCount(int requestedCount, GrColorType, GrGLFormat) const;
+    int maxRenderTargetSampleCount(GrColorType, GrGLFormat) const;
 
     // TODO: Once pixel config is no longer used in the caps remove this helper function.
     GrGLFormat pixelConfigToFormat(GrPixelConfig) const;
@@ -557,12 +567,6 @@ private:
 
     uint32_t fBlitFramebufferFlags;
 
-    /** Number type of the components (with out considering number of bits.) */
-    enum FormatType {
-        kNormalizedFixedPoint_FormatType,
-        kFloat_FormatType,
-    };
-
     struct ReadPixelsFormat {
         ReadPixelsFormat() : fFormat(0), fType(0) {}
         GrGLenum fFormat;
@@ -588,44 +592,45 @@ private:
     struct ConfigInfo {
         ConfigFormats fFormats;
 
-        FormatType fFormatType;
-
         // On ES contexts there are restrictions on type type/format that may be used for
         // ReadPixels. One is implicitly specified by the current FBO's format. The other is
         // queryable. This stores the queried option (lazily).
         ReadPixelsFormat fSecondReadPixelsFormat;
-
-
-        // If data from a surface of this config is read back to a GrColorType with all four
-        // color channels this indicates how each channel should be interpreted. May contain
-        // 0s and 1s.
-        GrSwizzle fRGBAReadSwizzle = GrSwizzle("rgba");
-
-        SkTDArray<int> fColorSampleCounts;
-
-        enum {
-            kRenderable_Flag              = 0x1,
-            kRenderableWithMSAA_Flag      = 0x2,
-        };
-        uint32_t fFlags = 0;
-
-        // verification of color attachment validity is done while flushing. Although only ever
-        // used in the (sole) rendering thread it can cause races if it is glommed into fFlags.
-        bool fVerifiedColorAttachment = false;
     };
 
     ConfigInfo fConfigTable[kGrPixelConfigCnt];
 
+    /** Number type of the components (with out considering number of bits.) */
+    enum class FormatType {
+        kUnknown,
+        kNormalizedFixedPoint,
+        kFloat,
+    };
+
+    // ColorTypeInfo for a specific format
     struct ColorTypeInfo {
         ColorTypeInfo(GrColorType colorType, uint32_t flags)
                 : fColorType(colorType)
                 , fFlags(flags) {}
 
+        ColorTypeInfo(GrColorType colorType, uint32_t flags, GrSwizzle rgbaReadSwizzle)
+                : fColorType(colorType)
+                , fFlags(flags)
+                , fRGBAReadSwizzle(rgbaReadSwizzle) {}
+
         GrColorType fColorType;
         enum {
             kUploadData_Flag = 0x1,
+            // Does Ganesh itself support rendering to this colorType & format pair. Renderability
+            // still additionally depends on if the format can be an FBO color attachment.
+            kRenderable_Flag = 0x2,
         };
         uint32_t fFlags;
+
+        // If data from a surface of this colorType & format is read back to a GrColorType with all
+        // four color channels this indicates how each channel should be interpreted. May contain
+        // 0s and 1s.
+        GrSwizzle fRGBAReadSwizzle = GrSwizzle("rgba");
     };
 
     struct FormatInfo {
@@ -638,6 +643,15 @@ private:
             return 0;
         }
 
+        GrSwizzle rgbaReadSwizzle(GrColorType colorType) const {
+            for (int i = 0; i < fColorTypeInfos.count(); ++i) {
+                if (fColorTypeInfos[i].fColorType == colorType) {
+                    return fColorTypeInfos[i].fRGBAReadSwizzle;
+                }
+            }
+            return GrSwizzle();
+        }
+
         enum {
             kTextureable_Flag                = 0x1,
             /** kFBOColorAttachment means that even if the format cannot be a GrRenderTarget, we can
@@ -647,6 +661,8 @@ private:
             kCanUseTexStorage_Flag           = 0x8,
         };
         uint32_t fFlags = 0;
+
+        FormatType fFormatType = FormatType::kUnknown;
 
         // Both compressed and uncompressed formats have base internal formats.
         GrGLenum fBaseInternalFormat = 0;
@@ -680,6 +696,12 @@ private:
 
         // Index fStencilFormats.
         int fStencilFormatIndex = kUnknown_StencilIndex;
+
+        SkTDArray<int> fColorSampleCounts;
+
+        // verification of color attachment validity is done while flushing. Although only ever
+        // used in the (sole) rendering thread it can cause races if it is glommed into fFlags.
+        bool fVerifiedColorAttachment = false;
 
         SkSTArray<1, ColorTypeInfo> fColorTypeInfos;
     };

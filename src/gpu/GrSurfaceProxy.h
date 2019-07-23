@@ -326,17 +326,18 @@ public:
 protected:
     // Deferred version
     GrSurfaceProxy(const GrBackendFormat& format, const GrSurfaceDesc& desc,
-                   GrSurfaceOrigin origin, const GrSwizzle& textureSwizzle, SkBackingFit fit,
-                   SkBudgeted budgeted, GrInternalSurfaceFlags surfaceFlags)
-            : GrSurfaceProxy(nullptr, LazyInstantiationType::kSingleUse, format, desc, origin,
-                             textureSwizzle, fit, budgeted, surfaceFlags) {
+                   GrRenderable renderable, GrSurfaceOrigin origin, const GrSwizzle& textureSwizzle,
+                   SkBackingFit fit, SkBudgeted budgeted, GrProtected isProtected,
+                   GrInternalSurfaceFlags surfaceFlags)
+            : GrSurfaceProxy(nullptr, LazyInstantiationType::kSingleUse, format, desc, renderable,
+                             origin, textureSwizzle, fit, budgeted, isProtected, surfaceFlags) {
         // Note: this ctor pulls a new uniqueID from the same pool at the GrGpuResources
     }
 
     // Lazy-callback version
-    GrSurfaceProxy(LazyInstantiateCallback&&, LazyInstantiationType,
-                   const GrBackendFormat& format, const GrSurfaceDesc&, GrSurfaceOrigin,
-                   const GrSwizzle& textureSwizzle, SkBackingFit, SkBudgeted,
+    GrSurfaceProxy(LazyInstantiateCallback&&, LazyInstantiationType, const GrBackendFormat& format,
+                   const GrSurfaceDesc&, GrRenderable, GrSurfaceOrigin,
+                   const GrSwizzle& textureSwizzle, SkBackingFit, SkBudgeted, GrProtected,
                    GrInternalSurfaceFlags);
 
     // Wrapped version.
@@ -358,9 +359,8 @@ protected:
     virtual sk_sp<GrSurface> createSurface(GrResourceProvider*) const = 0;
     void assign(sk_sp<GrSurface> surface);
 
-    sk_sp<GrSurface> createSurfaceImpl(
-            GrResourceProvider*, int sampleCnt, int minStencilSampleCount, GrSurfaceDescFlags,
-            GrMipMapped) const;
+    sk_sp<GrSurface> createSurfaceImpl(GrResourceProvider*, int sampleCnt,
+                                       int minStencilSampleCount, GrRenderable, GrMipMapped) const;
 
     // Once the size of a fully-lazy proxy is decided, and before it gets instantiated, the client
     // can use this optional method to specify the proxy's size. (A proxy's size can be less than
@@ -373,9 +373,8 @@ protected:
         fHeight = height;
     }
 
-    bool instantiateImpl(
-            GrResourceProvider* resourceProvider, int sampleCnt, int minStencilSampleCount,
-            GrSurfaceDescFlags descFlags, GrMipMapped, const GrUniqueKey*);
+    bool instantiateImpl(GrResourceProvider* resourceProvider, int sampleCnt,
+                         int minStencilSampleCount, GrRenderable, GrMipMapped, const GrUniqueKey*);
 
     // For deferred proxies this will be null until the proxy is instantiated.
     // For wrapped proxies it will point to the wrapped resource.
@@ -423,7 +422,6 @@ private:
 
     virtual size_t onUninstantiatedGpuMemorySize() const = 0;
 
-    bool                   fNeedsClear;
     bool                   fIgnoredByResourceAllocator = false;
     GrProtected            fIsProtected;
 

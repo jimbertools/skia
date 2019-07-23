@@ -47,6 +47,7 @@ GrCaps::GrCaps(const GrContextOptions& options) {
     fWritePixelsRowBytesSupport = false;
     fReadPixelsRowBytesSupport = false;
     fDriverBlacklistCCPR = false;
+    fDriverBlacklistMSAACCPR = false;
 
     fBlendEquationSupport = kBasic_BlendEquationSupport;
     fAdvBlendEqBlacklist = 0;
@@ -84,6 +85,7 @@ void GrCaps::applyOptionsOverrides(const GrContextOptions& options) {
     this->onApplyOptionsOverrides(options);
     if (options.fDisableDriverCorrectnessWorkarounds) {
         SkASSERT(!fDriverBlacklistCCPR);
+        SkASSERT(!fDriverBlacklistMSAACCPR);
         SkASSERT(!fAvoidStencilBuffers);
         SkASSERT(!fAdvBlendEqBlacklist);
         SkASSERT(!fPerformColorClearsAsDraws);
@@ -110,6 +112,9 @@ void GrCaps::applyOptionsOverrides(const GrContextOptions& options) {
     }
     if (options.fSuppressGeometryShaders) {
         fShaderCaps->fGeometryShaderSupport = false;
+    }
+    if (options.fClearAllTextures) {
+        fShouldInitializeTextures = true;
     }
 #endif
 
@@ -147,8 +152,8 @@ static const char* pixel_config_name(GrPixelConfig config) {
         case kSRGBA_8888_GrPixelConfig: return "SRGBA8888";
         case kRGBA_1010102_GrPixelConfig: return "RGBA1010102";
         case kRGBA_float_GrPixelConfig: return "RGBAFloat";
-        case kRG_float_GrPixelConfig: return "RGFloat";
         case kAlpha_half_GrPixelConfig: return "AlphaHalf";
+        case kAlpha_half_as_Lum_GrPixelConfig: return "AlphaHalf_asLum";
         case kAlpha_half_as_Red_GrPixelConfig: return "AlphaHalf_asRed";
         case kRGBA_half_GrPixelConfig: return "RGBAHalf";
         case kRGBA_half_Clamped_GrPixelConfig: return "RGBAHalfClamped";
@@ -225,6 +230,8 @@ void GrCaps::dumpJSON(SkJSONWriter* writer) const {
     writer->appendBool("Write pixels row bytes support", fWritePixelsRowBytesSupport);
     writer->appendBool("Read pixels row bytes support", fReadPixelsRowBytesSupport);
     writer->appendBool("Blacklist CCPR on current driver [workaround]", fDriverBlacklistCCPR);
+    writer->appendBool("Blacklist MSAA version of CCPR on current driver [workaround]",
+                       fDriverBlacklistMSAACCPR);
     writer->appendBool("Clamp-to-border", fClampToBorderSupport);
 
     writer->appendBool("Prefer VRAM Use over flushes [workaround]", fPreferVRAMUseOverFlushes);
@@ -326,13 +333,15 @@ bool GrCaps::canCopySurface(const GrSurfaceProxy* dst, const GrSurfaceProxy* src
     // has the expected values stored in the right places taking the swizzle into account. For now
     // we can be more restrictive and just make sure the configs are the same and if we generalize
     // copies and swizzles more in the future this can be updated.
-    if (dst->config() != src->config()) {
+    if (this->makeConfigSpecific(dst->config(), dst->backendFormat()) !=
+        this->makeConfigSpecific(src->config(), src->backendFormat())) {
         return false;
     }
     return this->onCanCopySurface(dst, src, srcRect, dstPoint);
 }
 
-bool GrCaps::validateSurfaceDesc(const GrSurfaceDesc& desc, GrMipMapped mipped) const {
+bool GrCaps::validateSurfaceDesc(const GrSurfaceDesc& desc, GrRenderable renderable,
+                                 GrMipMapped mipped) const {
     if (!this->isConfigTexturable(desc.fConfig)) {
         return false;
     }
@@ -345,7 +354,7 @@ bool GrCaps::validateSurfaceDesc(const GrSurfaceDesc& desc, GrMipMapped mipped) 
         return false;
     }
 
-    if (SkToBool(desc.fFlags & kRenderTarget_GrSurfaceFlag)) {
+    if (renderable == GrRenderable::kYes) {
         if (0 == this->getRenderTargetSampleCount(desc.fSampleCnt, desc.fConfig)) {
             return false;
         }
@@ -367,8 +376,49 @@ bool GrCaps::validateSurfaceDesc(const GrSurfaceDesc& desc, GrMipMapped mipped) 
     return true;
 }
 
-GrCaps::SupportedRead GrCaps::supportedReadPixelsColorType(GrPixelConfig config,
+GrCaps::SupportedRead GrCaps::supportedReadPixelsColorType(GrColorType srcColorType,
                                                            const GrBackendFormat&,
                                                            GrColorType dstColorType) const {
-    return SupportedRead{GrSwizzle::RGBA(), GrPixelConfigToColorType(config)};
+    return SupportedRead{GrSwizzle::RGBA(), srcColorType};
 }
+
+#ifdef SK_DEBUG
+bool GrCaps::AreConfigsCompatible(GrPixelConfig genericConfig, GrPixelConfig specificConfig) {
+    bool compatible = false;
+
+    switch (genericConfig) {
+        case kAlpha_8_GrPixelConfig:
+            compatible = kAlpha_8_GrPixelConfig == specificConfig || // here bc of the mock context
+                         kAlpha_8_as_Alpha_GrPixelConfig == specificConfig ||
+                         kAlpha_8_as_Red_GrPixelConfig == specificConfig;
+            break;
+        case kGray_8_GrPixelConfig:
+            compatible = kGray_8_GrPixelConfig == specificConfig ||  // here bc of the mock context
+                         kGray_8_as_Lum_GrPixelConfig == specificConfig ||
+                         kGray_8_as_Red_GrPixelConfig == specificConfig;
+            break;
+        case kAlpha_half_GrPixelConfig:
+            compatible = kAlpha_half_GrPixelConfig == specificConfig || // bc of the mock context
+                         kAlpha_half_as_Red_GrPixelConfig == specificConfig ||
+                         kAlpha_half_as_Lum_GrPixelConfig == specificConfig;
+            break;
+        case kRGB_888_GrPixelConfig:
+            compatible = kRGB_888_GrPixelConfig == specificConfig ||
+                         kRGB_888X_GrPixelConfig == specificConfig;
+            break;
+        case kRGBA_8888_GrPixelConfig:
+            compatible = kRGBA_8888_GrPixelConfig == specificConfig ||
+                         kBGRA_8888_GrPixelConfig == specificConfig;
+            break;
+        default:
+            compatible = genericConfig == specificConfig;
+            break;
+    }
+
+    if (!compatible) {
+        SkDebugf("Configs are not compatible: %d %d\n", genericConfig, specificConfig);
+    }
+
+    return compatible;
+}
+#endif

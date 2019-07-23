@@ -151,6 +151,8 @@ sk_sp<GrSurfaceContext> GrRecordingContext::makeWrappedSurfaceContext(
         const SkSurfaceProps* props) {
     ASSERT_SINGLE_OWNER_PRIV
 
+    SkASSERT(proxy);
+
     if (proxy->asRenderTargetProxy()) {
         SkASSERT(kPremul_SkAlphaType == alphaType || kOpaque_SkAlphaType == alphaType);
         return this->drawingManager()->makeRenderTargetContext(std::move(proxy), colorType,
@@ -163,38 +165,47 @@ sk_sp<GrSurfaceContext> GrRecordingContext::makeWrappedSurfaceContext(
     }
 }
 
-sk_sp<GrSurfaceContext> GrRecordingContext::makeDeferredSurfaceContext(
-        const GrBackendFormat& format,
-        const GrSurfaceDesc& dstDesc,
-        GrSurfaceOrigin origin,
-        GrMipMapped mipMapped,
+sk_sp<GrTextureContext> GrRecordingContext::makeDeferredTextureContext(
         SkBackingFit fit,
-        SkBudgeted isDstBudgeted,
+        int width,
+        int height,
         GrColorType colorType,
         SkAlphaType alphaType,
         sk_sp<SkColorSpace> colorSpace,
-        const SkSurfaceProps* props) {
-    sk_sp<GrTextureProxy> proxy;
-    if (GrMipMapped::kNo == mipMapped) {
-        proxy = this->proxyProvider()->createProxy(format, dstDesc, origin, fit, isDstBudgeted);
-    } else {
-        SkASSERT(SkBackingFit::kExact == fit);
-        proxy = this->proxyProvider()->createMipMapProxy(format, dstDesc, origin, isDstBudgeted);
+        GrMipMapped mipMapped,
+        GrSurfaceOrigin origin,
+        SkBudgeted budgeted,
+        GrProtected isProtected) {
+    auto format = this->caps()->getBackendFormatFromColorType(colorType);
+    if (!format.isValid()) {
+        return nullptr;
     }
-    if (!proxy) {
+    auto config = this->caps()->getConfigFromBackendFormat(format, colorType);
+    if (config == kUnknown_GrPixelConfig) {
         return nullptr;
     }
 
-    sk_sp<GrSurfaceContext> sContext = this->makeWrappedSurfaceContext(std::move(proxy),
-                                                                       colorType,
-                                                                       alphaType,
-                                                                       std::move(colorSpace),
-                                                                       props);
-    if (sContext && sContext->asRenderTargetContext()) {
-        sContext->asRenderTargetContext()->discard();
+    GrSurfaceDesc desc;
+    desc.fWidth = width;
+    desc.fHeight = height;
+    desc.fConfig = config;
+
+    sk_sp<GrTextureProxy> texture;
+    if (GrMipMapped::kNo == mipMapped) {
+        texture = this->proxyProvider()->createProxy(format, desc, GrRenderable::kNo, origin, fit,
+                                                     budgeted, isProtected);
+    } else {
+        texture = this->proxyProvider()->createMipMapProxy(format, desc, GrRenderable::kNo, origin,
+                                                           budgeted, isProtected);
+    }
+    if (!texture) {
+        return nullptr;
     }
 
-    return sContext;
+    auto drawingManager = this->drawingManager();
+
+    return drawingManager->makeTextureContext(std::move(texture), colorType, alphaType,
+                                              std::move(colorSpace));
 }
 
 sk_sp<GrRenderTargetContext> GrRecordingContext::makeDeferredRenderTargetContext(
@@ -224,18 +235,18 @@ sk_sp<GrRenderTargetContext> GrRecordingContext::makeDeferredRenderTargetContext
     }
 
     GrSurfaceDesc desc;
-    desc.fFlags = kRenderTarget_GrSurfaceFlag;
     desc.fWidth = width;
     desc.fHeight = height;
-    desc.fIsProtected = isProtected;
     desc.fConfig = config;
     desc.fSampleCnt = sampleCnt;
 
     sk_sp<GrTextureProxy> rtp;
     if (GrMipMapped::kNo == mipMapped) {
-        rtp = this->proxyProvider()->createProxy(format, desc, origin, fit, budgeted);
+        rtp = this->proxyProvider()->createProxy(format, desc, GrRenderable::kYes, origin, fit,
+                                                 budgeted, isProtected);
     } else {
-        rtp = this->proxyProvider()->createMipMapProxy(format, desc, origin, budgeted);
+        rtp = this->proxyProvider()->createMipMapProxy(format, desc, GrRenderable::kYes, origin,
+                                                       budgeted, isProtected);
     }
     if (!rtp) {
         return nullptr;
@@ -325,20 +336,20 @@ sk_sp<GrSurfaceContext> GrRecordingContextPriv::makeWrappedSurfaceContext(
                                                std::move(colorSpace), props);
 }
 
-sk_sp<GrSurfaceContext> GrRecordingContextPriv::makeDeferredSurfaceContext(
-        const GrBackendFormat& format,
-        const GrSurfaceDesc& dstDesc,
-        GrSurfaceOrigin origin,
-        GrMipMapped mipMapped,
+sk_sp<GrTextureContext> GrRecordingContextPriv::makeDeferredTextureContext(
         SkBackingFit fit,
-        SkBudgeted isDstBudgeted,
+        int width,
+        int height,
         GrColorType colorType,
         SkAlphaType alphaType,
         sk_sp<SkColorSpace> colorSpace,
-        const SkSurfaceProps* props) {
-    return fContext->makeDeferredSurfaceContext(format, dstDesc, origin, mipMapped, fit,
-                                                isDstBudgeted, colorType, alphaType,
-                                                std::move(colorSpace), props);
+        GrMipMapped mipMapped,
+        GrSurfaceOrigin origin,
+        SkBudgeted budgeted,
+        GrProtected isProtected) {
+    return fContext->makeDeferredTextureContext(fit, width, height, colorType, alphaType,
+                                                std::move(colorSpace), mipMapped, origin, budgeted,
+                                                isProtected);
 }
 
 sk_sp<GrRenderTargetContext> GrRecordingContextPriv::makeDeferredRenderTargetContext(

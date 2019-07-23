@@ -27,13 +27,10 @@ void testing_only_texture_test(skiatest::Reporter* reporter, GrContext* context,
 
     const GrCaps* caps = context->priv().caps();
 
-    GrPixelConfig config = SkColorType2GrPixelConfig(ct);
-    if (!caps->isConfigTexturable(config)) {
-        return;
-    }
-
     GrColorType grCT = SkColorTypeToGrColorType(ct);
-    if (GrColorType::kUnknown == grCT) {
+
+    GrBackendFormat backendFormat = caps->getBackendFormatFromColorType(grCT);
+    if (!caps->isFormatTexturable(grCT, backendFormat)) {
         return;
     }
 
@@ -60,7 +57,7 @@ void testing_only_texture_test(skiatest::Reporter* reporter, GrContext* context,
     }
     // skbug.com/9165
     auto supportedRead =
-            caps->supportedReadPixelsColorType(config, backendTex.getBackendFormat(), grCT);
+            caps->supportedReadPixelsColorType(grCT, backendTex.getBackendFormat(), grCT);
     if (supportedRead.fColorType != grCT || supportedRead.fSwizzle != GrSwizzle("rgba")) {
         return;
     }
@@ -68,7 +65,7 @@ void testing_only_texture_test(skiatest::Reporter* reporter, GrContext* context,
     sk_sp<GrTextureProxy> wrappedProxy;
     if (GrRenderable::kYes == renderable) {
         wrappedProxy = context->priv().proxyProvider()->wrapRenderableBackendTexture(
-                backendTex, kTopLeft_GrSurfaceOrigin, 1, kAdopt_GrWrapOwnership,
+                backendTex, kTopLeft_GrSurfaceOrigin, 1, grCT, kAdopt_GrWrapOwnership,
                 GrWrapCacheable::kNo);
     } else {
         wrappedProxy = context->priv().proxyProvider()->wrapBackendTexture(

@@ -514,13 +514,6 @@ bool GrDrawOpAtlas::createPages(GrProxyProvider* proxyProvider) {
     SkASSERT(SkIsPow2(fTextureWidth) && SkIsPow2(fTextureHeight));
 
     GrSurfaceDesc desc;
-    if (proxyProvider->caps()->shouldInitializeTextures()) {
-        // The atlas isn't guaranteed to touch all its pixels so, for platforms that benefit
-        // from complete initialization, clear everything.
-        desc.fFlags = kPerformInitialClear_GrSurfaceFlag;
-    } else {
-        desc.fFlags = kNone_GrSurfaceFlags;
-    }
     desc.fWidth = fTextureWidth;
     desc.fHeight = fTextureHeight;
     desc.fConfig = GrColorTypeToPixelConfig(fColorType);
@@ -529,8 +522,9 @@ bool GrDrawOpAtlas::createPages(GrProxyProvider* proxyProvider) {
     int numPlotsY = fTextureHeight/fPlotHeight;
 
     for (uint32_t i = 0; i < this->maxPages(); ++i) {
-        fProxies[i] = proxyProvider->createProxy(fFormat, desc, kTopLeft_GrSurfaceOrigin,
-                                                 SkBackingFit::kExact, SkBudgeted::kYes);
+        fProxies[i] = proxyProvider->createProxy(fFormat, desc, GrRenderable::kNo,
+                                                 kTopLeft_GrSurfaceOrigin, SkBackingFit::kExact,
+                                                 SkBudgeted::kYes, GrProtected::kNo);
         if (!fProxies[i]) {
             return false;
         }

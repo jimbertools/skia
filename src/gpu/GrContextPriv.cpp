@@ -57,19 +57,19 @@ sk_sp<GrSurfaceContext> GrContextPriv::makeWrappedSurfaceContext(sk_sp<GrSurface
                                                std::move(colorSpace), props);
 }
 
-sk_sp<GrSurfaceContext> GrContextPriv::makeDeferredSurfaceContext(const GrBackendFormat& format,
-                                                                  const GrSurfaceDesc& dstDesc,
-                                                                  GrSurfaceOrigin origin,
-                                                                  GrMipMapped mipMapped,
-                                                                  SkBackingFit fit,
-                                                                  SkBudgeted isDstBudgeted,
+sk_sp<GrTextureContext> GrContextPriv::makeDeferredTextureContext(SkBackingFit fit,
+                                                                  int width,
+                                                                  int height,
                                                                   GrColorType colorType,
                                                                   SkAlphaType alphaType,
                                                                   sk_sp<SkColorSpace> colorSpace,
-                                                                  const SkSurfaceProps* props) {
-    return fContext->makeDeferredSurfaceContext(format, dstDesc, origin, mipMapped, fit,
-                                                isDstBudgeted, colorType, alphaType,
-                                                std::move(colorSpace), props);
+                                                                  GrMipMapped mipMapped,
+                                                                  GrSurfaceOrigin origin,
+                                                                  SkBudgeted budgeted,
+                                                                  GrProtected isProtected) {
+    return fContext->makeDeferredTextureContext(fit, width, height, colorType, alphaType,
+                                                std::move(colorSpace), mipMapped, origin, budgeted,
+                                                isProtected);
 }
 
 sk_sp<GrRenderTargetContext> GrContextPriv::makeDeferredRenderTargetContext(
@@ -128,8 +128,8 @@ sk_sp<GrRenderTargetContext> GrContextPriv::makeBackendTextureRenderTargetContex
     SkASSERT(sampleCnt > 0);
 
     sk_sp<GrTextureProxy> proxy(this->proxyProvider()->wrapRenderableBackendTexture(
-            tex, origin, sampleCnt, kBorrow_GrWrapOwnership, GrWrapCacheable::kNo, releaseProc,
-            releaseCtx));
+            tex, origin, sampleCnt, colorType, kBorrow_GrWrapOwnership, GrWrapCacheable::kNo,
+            releaseProc, releaseCtx));
     if (!proxy) {
         return nullptr;
     }
@@ -231,14 +231,16 @@ SkString GrContextPriv::dump() const {
 
     static const char* kBackendStr[] = {
         "Metal",
+        "Dawn",
         "OpenGL",
         "Vulkan",
         "Mock",
     };
     GR_STATIC_ASSERT(0 == (unsigned)GrBackendApi::kMetal);
-    GR_STATIC_ASSERT(1 == (unsigned)GrBackendApi::kOpenGL);
-    GR_STATIC_ASSERT(2 == (unsigned)GrBackendApi::kVulkan);
-    GR_STATIC_ASSERT(3 == (unsigned)GrBackendApi::kMock);
+    GR_STATIC_ASSERT(1 == (unsigned)GrBackendApi::kDawn);
+    GR_STATIC_ASSERT(2 == (unsigned)GrBackendApi::kOpenGL);
+    GR_STATIC_ASSERT(3 == (unsigned)GrBackendApi::kVulkan);
+    GR_STATIC_ASSERT(4 == (unsigned)GrBackendApi::kMock);
     writer.appendString("backend", kBackendStr[(unsigned)fContext->backend()]);
 
     writer.appendName("caps");

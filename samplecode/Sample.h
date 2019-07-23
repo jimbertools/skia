@@ -13,9 +13,10 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkString.h"
 #include "include/private/SkMacros.h"
-#include "src/utils/SkMetaData.h"
+#include "tools/InputState.h"
 #include "tools/ModifierKey.h"
 #include "tools/Registry.h"
+#include "tools/SkMetaData.h"
 
 class SkCanvas;
 class Sample;
@@ -52,8 +53,6 @@ public:
     virtual bool onChar(SkUnichar) { return false; }
 
     // Click handling
-    // TODO: unify Sample::InputState and sk_app::Window::InputState
-    enum class InputState { kDown, kUp, kMove };
     class Click {
     public:
         virtual ~Click() = default;

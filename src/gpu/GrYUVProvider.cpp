@@ -150,12 +150,8 @@ sk_sp<GrTextureProxy> GrYUVProvider::refAsTextureProxy(GrRecordingContext* ctx,
                                                           dataStoragePtr);
 
         auto proxyProvider = ctx->priv().proxyProvider();
-        auto clearFlag = kNone_GrSurfaceFlags;
-        if (ctx->priv().caps()->shouldInitializeTextures() && fit == SkBackingFit::kApprox) {
-            clearFlag = kPerformInitialClear_GrSurfaceFlag;
-        }
-        yuvTextureProxies[i] = proxyProvider->createTextureProxy(yuvImage, clearFlag,
-                                                                 1, SkBudgeted::kYes, fit);
+        yuvTextureProxies[i] = proxyProvider->createTextureProxy(yuvImage, GrRenderable::kNo, 1,
+                                                                 SkBudgeted::kYes, fit);
 
         SkASSERT(yuvTextureProxies[i]->width() == yuvSizeInfo.fSizes[i].fWidth);
         SkASSERT(yuvTextureProxies[i]->height() == yuvSizeInfo.fSizes[i].fHeight);

@@ -15,6 +15,7 @@
 #include "include/gpu/GrDriverBugWorkarounds.h"
 #include "include/private/GrTypesPriv.h"
 #include "src/gpu/GrShaderCaps.h"
+#include "src/gpu/GrSurfaceProxy.h"
 
 class GrBackendFormat;
 class GrBackendRenderTarget;
@@ -22,7 +23,6 @@ class GrBackendTexture;
 struct GrContextOptions;
 class GrRenderTargetProxy;
 class GrSurface;
-class GrSurfaceProxy;
 class SkJSONWriter;
 
 /**
@@ -179,9 +179,8 @@ public:
         return this->maxRenderTargetSampleCount(config) > 0;
     }
 
-    // TODO: Remove this after Flutter updated to no longer use it.
-    bool isConfigRenderable(GrPixelConfig config, bool withMSAA) const {
-        return this->maxRenderTargetSampleCount(config) > (withMSAA ? 1 : 0);
+    bool isFormatRenderable(GrColorType ct, const GrBackendFormat& format) const {
+        return this->maxRenderTargetSampleCount(ct, format) > 0;
     }
 
     // Find a sample count greater than or equal to the requested count which is supported for a
@@ -238,14 +237,14 @@ public:
     };
 
     /**
-     * Given a src surface's pixel config and its backend format as well as a color type the caller
+     * Given a src surface's color type and its backend format as well as a color type the caller
      * would like read into, this provides a legal color type that the caller may pass to
      * GrGpu::readPixels(). The returned color type may differ from the passed dstColorType, in
      * which case the caller must convert the read pixel data (see GrConvertPixels). When converting
      * to dstColorType the swizzle in the returned struct should be applied. The caller must check
      * the returned color type for kUnknown.
      */
-    virtual SupportedRead supportedReadPixelsColorType(GrPixelConfig srcConfig,
+    virtual SupportedRead supportedReadPixelsColorType(GrColorType srcColorType,
                                                        const GrBackendFormat& srcFormat,
                                                        GrColorType dstColorType) const;
 
@@ -291,6 +290,16 @@ public:
      */
     bool shouldInitializeTextures() const { return fShouldInitializeTextures; }
 
+    /**
+     * When this is true it is required that all textures are initially cleared. However, the
+     * clearing must be implemented by passing level data to GrGpu::createTexture() rather than
+     * be implemeted by GrGpu::createTexture().
+     *
+     * TODO: Make this take GrBacknedFormat when canClearTextureOnCreation() does as well.
+     */
+    bool createTextureMustSpecifyAllLevels() const {
+        return this->shouldInitializeTextures() && !this->canClearTextureOnCreation();
+    }
 
     /** Returns true if the given backend supports importing AHardwareBuffers via the
      * GrAHardwarebufferImageGenerator. This will only ever be supported on Android devices with API
@@ -337,19 +346,28 @@ public:
 
     // Should we disable the CCPR code due to a faulty driver?
     bool driverBlacklistCCPR() const { return fDriverBlacklistCCPR; }
+    bool driverBlacklistMSAACCPR() const { return fDriverBlacklistMSAACCPR; }
 
     /**
-     * This is can be called before allocating a texture to be a dst for copySurface. This is only
-     * used for doing dst copies needed in blends, thus the src is always a GrRenderTargetProxy. It
-     * will populate config and flags fields of the desc such that copySurface can efficiently
-     * succeed as well as the proxy origin. rectsMustMatch will be set to true if the copy operation
-     * must ensure that the src and dest rects are identical. disallowSubrect will be set to true if
-     * copy rect must equal src's bounds.
+     * This is used to try to ensure a successful copy a dst in order to perform shader-based
+     * blending.
+     *
+     * fRectsMustMatch will be set to true if the copy operation must ensure that the src and dest
+     * rects are identical.
+     *
+     * fMustCopyWholeSrc will be set to true if copy rect must equal src's bounds.
+     *
+     * Caller will detect cases when copy cannot succeed and try copy-as-draw as a fallback.
      */
-    virtual bool initDescForDstCopy(const GrRenderTargetProxy* src, GrSurfaceDesc* desc,
-                                    bool* rectsMustMatch, bool* disallowSubrect) const = 0;
+    struct DstCopyRestrictions {
+        GrSurfaceProxy::RectsMustMatch fRectsMustMatch = GrSurfaceProxy::RectsMustMatch::kNo;
+        bool fMustCopyWholeSrc = false;
+    };
+    virtual DstCopyRestrictions getDstCopyRestrictions(const GrRenderTargetProxy* src) const {
+        return {};
+    }
 
-    bool validateSurfaceDesc(const GrSurfaceDesc&, GrMipMapped) const;
+    bool validateSurfaceDesc(const GrSurfaceDesc&, GrRenderable renderable, GrMipMapped) const;
 
     /**
      * If the GrBackendRenderTarget can be used with the supplied SkColorType the return will be
@@ -392,6 +410,17 @@ public:
     virtual GrBackendFormat getBackendFormatFromCompressionType(SkImage::CompressionType) const = 0;
 
     /**
+     * Used by implementation of shouldInitializeTextures(). Indicates whether GrGpu implements the
+     * clear in GrGpu::createTexture() or if false then the caller must provide cleared MIP level
+     * data or GrGpu::createTexture() will fail.
+     *
+     * TODO: Make this take a GrBackendFormat so that GL can make this faster for cases
+     * when the format is renderable and glTexClearImage is not available. Doing this
+     * is overly complicated until the GrPixelConfig/format mess is straightened out..
+     */
+    virtual bool canClearTextureOnCreation() const = 0;
+
+    /**
      * The CLAMP_TO_BORDER wrap mode for texture coordinates was added to desktop GL in 1.3, and
      * GLES 3.2, but is also available in extensions. Vulkan and Metal always have support.
      */
@@ -410,6 +439,24 @@ public:
     virtual GrSwizzle getOutputSwizzle(const GrBackendFormat&, GrColorType) const = 0;
 
     const GrDriverBugWorkarounds& workarounds() const { return fDriverBugWorkarounds; }
+
+    /**
+     * Given a possibly generic GrPixelConfig and a backend format return a specific
+     * GrPixelConfig.
+     */
+    GrPixelConfig makeConfigSpecific(GrPixelConfig config, const GrBackendFormat& format) const {
+        auto ct = GrPixelConfigToColorType(config);
+        auto result = this->getConfigFromBackendFormat(format, ct);
+        SkASSERT(config == result || AreConfigsCompatible(config, result));
+        return result;
+    }
+
+#ifdef SK_DEBUG
+    // This is just a debugging entry point until we're weaned off of GrPixelConfig. It
+    // should be used to verify that the pixel config from user-level code (the genericConfig)
+    // is compatible with a pixel config we've computed from scratch (the specificConfig).
+    static bool AreConfigsCompatible(GrPixelConfig genericConfig, GrPixelConfig specificConfig);
+#endif
 
 protected:
     /** Subclasses must call this at the end of their constructors in order to apply caps
@@ -450,6 +497,7 @@ protected:
 
     // Driver workaround
     bool fDriverBlacklistCCPR                        : 1;
+    bool fDriverBlacklistMSAACCPR                    : 1;
     bool fAvoidStencilBuffers                        : 1;
     bool fAvoidWritePixelsFastPath                   : 1;
 

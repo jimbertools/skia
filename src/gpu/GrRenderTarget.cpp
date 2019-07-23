@@ -19,13 +19,12 @@
 #include "src/gpu/GrStencilAttachment.h"
 #include "src/gpu/GrStencilSettings.h"
 
-GrRenderTarget::GrRenderTarget(GrGpu* gpu, const GrSurfaceDesc& desc,
+GrRenderTarget::GrRenderTarget(GrGpu* gpu, const GrSurfaceDesc& desc, GrProtected isProtected,
                                GrStencilAttachment* stencil)
-        : INHERITED(gpu, desc)
+        : INHERITED(gpu, desc, isProtected)
         , fSampleCnt(desc.fSampleCnt)
         , fSamplePatternKey(GrSamplePatternDictionary::kInvalidSamplePatternKey)
         , fStencilAttachment(stencil) {
-    SkASSERT(desc.fFlags & kRenderTarget_GrSurfaceFlag);
     fResolveRect = SkRectPriv::MakeILargestInverted();
 }
 

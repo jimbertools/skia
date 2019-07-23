@@ -29,13 +29,13 @@ DEF_GPUTEST_FOR_MOCK_CONTEXT(GrSurface, reporter, ctxInfo) {
     auto resourceProvider = context->priv().resourceProvider();
 
     GrSurfaceDesc desc;
-    desc.fFlags = kRenderTarget_GrSurfaceFlag;
     desc.fWidth = 256;
     desc.fHeight = 256;
     desc.fConfig = kRGBA_8888_GrPixelConfig;
     desc.fSampleCnt = 1;
     sk_sp<GrSurface> texRT1 = resourceProvider->createTexture(
-        desc, SkBudgeted::kNo, GrResourceProvider::Flags::kNoPendingIO);
+            desc, GrRenderable::kYes, SkBudgeted::kNo, GrProtected::kNo,
+            GrResourceProvider::Flags::kNoPendingIO);
 
     REPORTER_ASSERT(reporter, texRT1.get() == texRT1->asRenderTarget());
     REPORTER_ASSERT(reporter, texRT1.get() == texRT1->asTexture());
@@ -46,9 +46,9 @@ DEF_GPUTEST_FOR_MOCK_CONTEXT(GrSurface, reporter, ctxInfo) {
     REPORTER_ASSERT(reporter, static_cast<GrSurface*>(texRT1->asRenderTarget()) ==
                     static_cast<GrSurface*>(texRT1->asTexture()));
 
-    desc.fFlags = kNone_GrSurfaceFlags;
     sk_sp<GrTexture> tex1 = resourceProvider->createTexture(
-        desc, SkBudgeted::kNo, GrResourceProvider::Flags::kNoPendingIO);
+            desc, GrRenderable::kNo, SkBudgeted::kNo, GrProtected::kNo,
+            GrResourceProvider::Flags::kNoPendingIO);
     REPORTER_ASSERT(reporter, nullptr == tex1->asRenderTarget());
     REPORTER_ASSERT(reporter, tex1.get() == tex1->asTexture());
     REPORTER_ASSERT(reporter, static_cast<GrSurface*>(tex1.get()) == tex1->asTexture());
@@ -58,7 +58,7 @@ DEF_GPUTEST_FOR_MOCK_CONTEXT(GrSurface, reporter, ctxInfo) {
         SkColors::kTransparent, GrMipMapped::kNo, GrRenderable::kNo, GrProtected::kNo);
 
     sk_sp<GrSurface> texRT2 = resourceProvider->wrapRenderableBackendTexture(
-            backendTex, 1, kBorrow_GrWrapOwnership, GrWrapCacheable::kNo);
+            backendTex, 1, GrColorType::kRGBA_8888, kBorrow_GrWrapOwnership, GrWrapCacheable::kNo);
 
     REPORTER_ASSERT(reporter, texRT2.get() == texRT2->asRenderTarget());
     REPORTER_ASSERT(reporter, texRT2.get() == texRT2->asTexture());
@@ -107,17 +107,33 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(GrSurfaceRenderability, reporter, ctxInfo) {
             GrSurfaceDesc desc;
             desc.fWidth = width;
             desc.fHeight = height;
-            desc.fFlags = renderable == GrRenderable::kYes ? kRenderTarget_GrSurfaceFlag
-                                                           : kNone_GrSurfaceFlags;
             desc.fConfig = config;
             desc.fSampleCnt = 1;
-            return rp->createTexture(desc, SkBudgeted::kNo,
+            return rp->createTexture(desc, renderable, SkBudgeted::kNo, GrProtected::kNo,
                                      GrResourceProvider::Flags::kNoPendingIO);
         }
     };
 
     for (int c = 0; c <= kLast_GrPixelConfig; ++c) {
         GrPixelConfig config = static_cast<GrPixelConfig>(c);
+
+        // We don't round trip correctly going from pixelConfig to colorType to
+        // backendFormat with the RGBX config.
+        if (config == kRGB_888X_GrPixelConfig) {
+            continue;
+        }
+
+        // The specific kAlpha_* and kGray_8* pixel configs cause difficulties.
+        // The mapping from config -> colorType -> format doesn't necessarily
+        // resolve back to the expected pixel config. Just test the generic pixel configs.
+        if (config == kAlpha_8_as_Alpha_GrPixelConfig ||
+            config == kAlpha_8_as_Red_GrPixelConfig ||
+            config == kGray_8_as_Lum_GrPixelConfig ||
+            config == kGray_8_as_Red_GrPixelConfig ||
+            config == kAlpha_half_as_Red_GrPixelConfig ||
+            config == kAlpha_half_as_Lum_GrPixelConfig) {
+            continue;
+        }
 
         for (GrSurfaceOrigin origin : { kTopLeft_GrSurfaceOrigin, kBottomLeft_GrSurfaceOrigin }) {
             if (config == kUnknown_GrPixelConfig) {
@@ -143,19 +159,18 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(GrSurfaceRenderability, reporter, ctxInfo) {
             GrSurfaceDesc desc;
             desc.fWidth = kW;
             desc.fHeight = kH;
-            desc.fFlags = kNone_GrSurfaceFlags;
             desc.fConfig = config;
             desc.fSampleCnt = 1;
 
-            sk_sp<GrTextureProxy> proxy =
-                    proxyProvider->createMipMapProxy(format, desc, origin, SkBudgeted::kNo);
+            sk_sp<GrTextureProxy> proxy = proxyProvider->createMipMapProxy(
+                    format, desc, GrRenderable::kNo, origin, SkBudgeted::kNo, GrProtected::kNo);
             REPORTER_ASSERT(reporter,
                             SkToBool(proxy.get()) ==
                                     (caps->isConfigTexturable(desc.fConfig) &&
                                      caps->mipMapSupport() && !GrPixelConfigIsCompressed(config)));
 
-            desc.fFlags = kRenderTarget_GrSurfaceFlag;
-            tex = resourceProvider->createTexture(desc, SkBudgeted::kNo,
+            tex = resourceProvider->createTexture(desc, GrRenderable::kYes, SkBudgeted::kNo,
+                                                  GrProtected::kNo,
                                                   GrResourceProvider::Flags::kNoPendingIO);
             bool isRenderable = caps->isConfigRenderable(config);
             REPORTER_ASSERT(reporter, SkToBool(tex) == isRenderable,
@@ -163,7 +178,8 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(GrSurfaceRenderability, reporter, ctxInfo) {
                             isRenderable);
 
             desc.fSampleCnt = 2;
-            tex = resourceProvider->createTexture(desc, SkBudgeted::kNo,
+            tex = resourceProvider->createTexture(desc, GrRenderable::kYes, SkBudgeted::kNo,
+                                                  GrProtected::kNo,
                                                   GrResourceProvider::Flags::kNoPendingIO);
             isRenderable = SkToBool(caps->getRenderTargetSampleCount(2, config));
             REPORTER_ASSERT(reporter, SkToBool(tex) == isRenderable,
@@ -177,98 +193,125 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(GrSurfaceRenderability, reporter, ctxInfo) {
 #include "src/gpu/GrSurfaceProxy.h"
 #include "src/gpu/GrTextureContext.h"
 
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(InitialTextureClear, reporter, context_info) {
+DEF_GPUTEST(InitialTextureClear, reporter, baseOptions) {
+    GrContextOptions options = baseOptions;
+    options.fClearAllTextures = true;
     static constexpr int kSize = 100;
-    GrSurfaceDesc desc;
-    desc.fWidth = desc.fHeight = kSize;
     std::unique_ptr<uint32_t[]> data(new uint32_t[kSize * kSize]);
-
-    GrContext* context = context_info.grContext();
-    const GrCaps* caps = context->priv().caps();
-    GrProxyProvider* proxyProvider = context->priv().proxyProvider();
-
-    for (int c = 0; c <= kLast_GrPixelConfig; ++c) {
-        desc.fConfig = static_cast<GrPixelConfig>(c);
-        if (!caps->isConfigTexturable(desc.fConfig)) {
+    for (int ct = 0; ct < sk_gpu_test::GrContextFactory::kContextTypeCnt; ++ct) {
+        sk_gpu_test::GrContextFactory factory(options);
+        auto contextType = static_cast<sk_gpu_test::GrContextFactory::ContextType>(ct);
+        if (!sk_gpu_test::GrContextFactory::IsRenderingContext(contextType)) {
             continue;
         }
-        desc.fFlags = kPerformInitialClear_GrSurfaceFlag;
-        for (bool rt : {false, true}) {
-            if (rt && !caps->isConfigRenderable(desc.fConfig)) {
+        auto context = factory.get(contextType);
+        if (!context) {
+            continue;
+        }
+        GrSurfaceDesc desc;
+        desc.fWidth = desc.fHeight = kSize;
+
+        const GrCaps* caps = context->priv().caps();
+        GrProxyProvider* proxyProvider = context->priv().proxyProvider();
+
+        for (int c = 0; c <= kLast_GrPixelConfig; ++c) {
+            desc.fConfig = static_cast<GrPixelConfig>(c);
+            if (!caps->isConfigTexturable(desc.fConfig)) {
                 continue;
             }
-            desc.fFlags |= rt ? kRenderTarget_GrSurfaceFlag : kNone_GrSurfaceFlags;
-            for (GrSurfaceOrigin origin :
-                 {kTopLeft_GrSurfaceOrigin, kBottomLeft_GrSurfaceOrigin}) {
-                for (auto fit : { SkBackingFit::kApprox, SkBackingFit::kExact }) {
-                    // Try directly creating the texture.
-                    // Do this twice in an attempt to hit the cache on the second time through.
-                    for (int i = 0; i < 2; ++i) {
+            for (auto renderable : {GrRenderable::kNo, GrRenderable::kYes}) {
+                if (renderable == GrRenderable::kYes && !caps->isConfigRenderable(desc.fConfig)) {
+                    continue;
+                }
+                for (GrSurfaceOrigin origin :
+                     {kTopLeft_GrSurfaceOrigin, kBottomLeft_GrSurfaceOrigin}) {
+                    for (auto fit : {SkBackingFit::kApprox, SkBackingFit::kExact}) {
                         auto proxy = proxyProvider->testingOnly_createInstantiatedProxy(
-                                desc, origin, fit, SkBudgeted::kYes);
+                                desc, renderable, origin, fit, SkBudgeted::kYes, GrProtected::kNo);
                         if (!proxy) {
                             continue;
                         }
                         auto texCtx = context->priv().makeWrappedSurfaceContext(
                                 std::move(proxy), GrPixelConfigToColorType(desc.fConfig),
                                 kPremul_SkAlphaType);
-                        SkImageInfo info = SkImageInfo::Make(
-                                kSize, kSize, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+                        SkImageInfo info = SkImageInfo::Make(kSize, kSize, kRGBA_8888_SkColorType,
+                                                             kPremul_SkAlphaType);
                         memset(data.get(), 0xAB, kSize * kSize * sizeof(uint32_t));
                         if (texCtx->readPixels(info, data.get(), 0, {0, 0})) {
                             uint32_t cmp = GrPixelConfigIsOpaque(desc.fConfig) ? 0xFF000000 : 0;
                             for (int i = 0; i < kSize * kSize; ++i) {
                                 if (cmp != data.get()[i]) {
-                                    ERRORF(reporter, "Failed on config %d", desc.fConfig);
+                                    ERRORF(reporter, "Failed on conf %d (pix %d) 0x%x != 0x%x",
+                                        desc.fConfig, i, cmp, data.get()[i]);
                                     break;
                                 }
                             }
                         }
-                        memset(data.get(), 0xBC, kSize * kSize * sizeof(uint32_t));
-                        // Here we overwrite the texture so that the second time through we
-                        // test against recycling without reclearing.
-                        if (0 == i) {
-                            texCtx->writePixels(info, data.get(), 0, {0, 0});
-                        }
-                    }
-                    context->priv().testingOnly_purgeAllUnlockedResources();
+                        context->priv().testingOnly_purgeAllUnlockedResources();
 
-                    // We don't round trip correctly going from pixelConfig to colorType to
-                    // backendFormat with the RGBX config. The actual config stored on the GrSurface
-                    // will be RGBA_8888 but the format we create below will say it is RGB_888.
-                    if (desc.fConfig == kRGB_888X_GrPixelConfig) {
-                        continue;
-                    }
-                    GrColorType colorType = GrPixelConfigToColorType(desc.fConfig);
-                    const GrBackendFormat format = caps->getBackendFormatFromColorType(colorType);
-
-                    // Try creating the texture as a deferred proxy.
-                    for (int i = 0; i < 2; ++i) {
-                        auto surfCtx = context->priv().makeDeferredSurfaceContext(
-                                format, desc, origin, GrMipMapped::kNo, fit, SkBudgeted::kYes,
-                                colorType, kPremul_SkAlphaType);
-                        if (!surfCtx) {
+                        // We don't round trip correctly going from pixelConfig to colorType to
+                        // backendFormat with the RGBX config. The actual config stored on the
+                        // GrSurface will be RGBA_8888 but the format we create below will say it is
+                        // RGB_888.
+                        if (desc.fConfig == kRGB_888X_GrPixelConfig) {
                             continue;
                         }
-                        SkImageInfo info = SkImageInfo::Make(
-                                kSize, kSize, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
-                        memset(data.get(), 0xAB, kSize * kSize * sizeof(uint32_t));
-                        if (surfCtx->readPixels(info, data.get(), 0, {0, 0})) {
-                            uint32_t cmp = GrPixelConfigIsOpaque(desc.fConfig) ? 0xFF000000 : 0;
-                            for (int i = 0; i < kSize * kSize; ++i) {
-                                if (cmp != data.get()[i]) {
-                                    ERRORF(reporter, "Failed on config %d", desc.fConfig);
-                                    break;
+
+                        // The specific kAlpha_* pixel configs also cause difficulties with OpenGL.
+                        // The mapping from config -> colorType -> format doesn't necessarily
+                        // resolve back to the expected pixel config. In this case we just test
+                        // the generics.
+                        if (GrBackendApi::kOpenGL == context->backend() &&
+                            (desc.fConfig == kAlpha_8_as_Alpha_GrPixelConfig ||
+                             desc.fConfig == kAlpha_8_as_Red_GrPixelConfig ||
+                             desc.fConfig == kAlpha_half_as_Red_GrPixelConfig ||
+                             desc.fConfig == kAlpha_half_as_Lum_GrPixelConfig)) {
+                            continue;
+                        }
+
+                        // The specific kGray_8_* pixel configs also cause difficulties with OpenGL.
+                        // The mapping from config -> colorType -> format doesn't necessarily
+                        // resolve back to the expected pixel config. In this case we just test
+                        // the generic.
+                        if (GrBackendApi::kOpenGL == context->backend() &&
+                            (desc.fConfig == kGray_8_as_Lum_GrPixelConfig ||
+                             desc.fConfig == kGray_8_as_Red_GrPixelConfig)) {
+                            continue;
+                        }
+
+                        GrColorType colorType = GrPixelConfigToColorType(desc.fConfig);
+
+                        // Try creating the texture as a deferred proxy.
+                        for (int i = 0; i < 2; ++i) {
+                            sk_sp<GrSurfaceContext> surfCtx;
+                            if (renderable == GrRenderable::kYes) {
+                                surfCtx = context->priv().makeDeferredRenderTargetContext(
+                                        fit, desc.fWidth, desc.fHeight, colorType, nullptr,
+                                        desc.fSampleCnt, GrMipMapped::kNo, origin, nullptr);
+                            } else {
+                                surfCtx = context->priv().makeDeferredTextureContext(
+                                        fit, desc.fWidth, desc.fHeight, colorType,
+                                        kUnknown_SkAlphaType, nullptr, GrMipMapped::kNo, origin);
+                            }
+                            if (!surfCtx) {
+                                continue;
+                            }
+                            SkImageInfo info = SkImageInfo::Make(
+                                    kSize, kSize, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+                            memset(data.get(), 0xAB, kSize * kSize * sizeof(uint32_t));
+                            if (surfCtx->readPixels(info, data.get(), 0, {0, 0})) {
+                                uint32_t cmp = GrPixelConfigIsOpaque(desc.fConfig) ? 0xFF000000 : 0;
+                                for (int i = 0; i < kSize * kSize; ++i) {
+                                    if (cmp != data.get()[i]) {
+                                        ERRORF(reporter, "Failed on conf %d (pix %d) 0x%x != 0x%x",
+                                            desc.fConfig, i, cmp, data.get()[i]);
+                                        break;
+                                    }
                                 }
                             }
-                        }
-                        // Here we overwrite the texture so that the second time through we
-                        // test against recycling without reclearing.
-                        if (0 == i) {
-                            surfCtx->writePixels(info, data.get(), 0, {0, 0});
+                            context->priv().testingOnly_purgeAllUnlockedResources();
                         }
                     }
-                    context->priv().testingOnly_purgeAllUnlockedResources();
                 }
             }
         }
@@ -345,7 +388,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReadOnlyTexture, reporter, context_info) {
 
         // Copies should not work with a read-only texture
         auto copySrc = proxyProvider->createTextureProxy(
-                SkImage::MakeFromRaster(write, nullptr, nullptr), kNone_GrSurfaceFlags, 1,
+                SkImage::MakeFromRaster(write, nullptr, nullptr), GrRenderable::kNo, 1,
                 SkBudgeted::kYes, SkBackingFit::kExact);
         REPORTER_ASSERT(reporter, copySrc);
         auto copyResult = surfContext->testCopy(copySrc.get());
@@ -386,7 +429,8 @@ static sk_sp<GrTexture> make_wrapped_texture(GrContext* context, GrRenderable re
     sk_sp<GrTexture> texture;
     if (GrRenderable::kYes == renderable) {
         texture = context->priv().resourceProvider()->wrapRenderableBackendTexture(
-                backendTexture, 1, kBorrow_GrWrapOwnership, GrWrapCacheable::kNo);
+                backendTexture, 1, GrColorType::kRGBA_8888, kBorrow_GrWrapOwnership,
+                GrWrapCacheable::kNo);
     } else {
         texture = context->priv().resourceProvider()->wrapBackendTexture(
                 backendTexture, kBorrow_GrWrapOwnership, GrWrapCacheable::kNo, kRW_GrIOType);
@@ -410,10 +454,9 @@ static sk_sp<GrTexture> make_normal_texture(GrContext* context, GrRenderable ren
     GrSurfaceDesc desc;
     desc.fConfig = kRGBA_8888_GrPixelConfig;
     desc.fWidth = desc.fHeight = kSurfSize;
-    desc.fFlags = GrRenderable::kYes == renderable ? kRenderTarget_GrSurfaceFlag
-                                                   : kNone_GrSurfaceFlags;
     return context->priv().resourceProvider()->createTexture(
-        desc, SkBudgeted::kNo, GrResourceProvider::Flags::kNoPendingIO);
+            desc, renderable, SkBudgeted::kNo, GrProtected::kNo,
+            GrResourceProvider::Flags::kNoPendingIO);
 }
 
 DEF_GPUTEST(TextureIdleProcTest, reporter, options) {
@@ -480,7 +523,7 @@ DEF_GPUTEST(TextureIdleProcTest, reporter, options) {
 
                 auto texture = make(context, 1);
                 REPORTER_ASSERT(reporter, idleIDs.find(1) == idleIDs.end());
-                bool isRT = SkToBool(texture->asRenderTarget());
+                auto renderable = GrRenderable(SkToBool(texture->asRenderTarget()));
                 auto backendFormat = texture->backendFormat();
                 texture.reset();
                 REPORTER_ASSERT(reporter, idleIDs.find(1) != idleIDs.end());
@@ -503,9 +546,6 @@ DEF_GPUTEST(TextureIdleProcTest, reporter, options) {
                 desc.fWidth = w;
                 desc.fHeight = h;
                 desc.fConfig = kRGBA_8888_GrPixelConfig;
-                if (isRT) {
-                    desc.fFlags = kRenderTarget_GrSurfaceFlag;
-                }
                 SkBudgeted budgeted;
                 if (texture->resourcePriv().budgetedType() == GrBudgetedType::kBudgeted) {
                     budgeted = SkBudgeted::kYes;
@@ -513,10 +553,10 @@ DEF_GPUTEST(TextureIdleProcTest, reporter, options) {
                     budgeted = SkBudgeted::kNo;
                 }
                 auto proxy = context->priv().proxyProvider()->createLazyProxy(
-                        singleUseLazyCB, backendFormat, desc,
+                        singleUseLazyCB, backendFormat, desc, renderable,
                         GrSurfaceOrigin::kTopLeft_GrSurfaceOrigin, GrMipMapped::kNo,
                         GrInternalSurfaceFlags ::kNone, SkBackingFit::kExact, budgeted,
-                        GrSurfaceProxy::LazyInstantiationType::kSingleUse);
+                        GrProtected::kNo, GrSurfaceProxy::LazyInstantiationType::kSingleUse);
                 rtc->drawTexture(GrNoClip(), proxy, GrSamplerState::Filter::kNearest,
                                  SkBlendMode::kSrcOver, SkPMColor4f(), SkRect::MakeWH(w, h),
                                  SkRect::MakeWH(w, h), GrAA::kNo, GrQuadAAFlags::kNone,
@@ -550,10 +590,10 @@ DEF_GPUTEST(TextureIdleProcTest, reporter, options) {
                     return GrSurfaceProxy::LazyInstantiationResult{std::move(texture), mode};
                 };
                 proxy = context->priv().proxyProvider()->createLazyProxy(
-                        deinstantiateLazyCB, backendFormat, desc,
+                        deinstantiateLazyCB, backendFormat, desc, renderable,
                         GrSurfaceOrigin::kTopLeft_GrSurfaceOrigin, GrMipMapped::kNo,
                         GrInternalSurfaceFlags ::kNone, SkBackingFit::kExact, budgeted,
-                        GrSurfaceProxy::LazyInstantiationType::kDeinstantiate);
+                        GrProtected::kNo, GrSurfaceProxy::LazyInstantiationType::kDeinstantiate);
                 rtc->drawTexture(GrNoClip(), std::move(proxy), GrSamplerState::Filter::kNearest,
                                  SkBlendMode::kSrcOver, SkPMColor4f(), SkRect::MakeWH(w, h),
                                  SkRect::MakeWH(w, h), GrAA::kNo, GrQuadAAFlags::kNone,

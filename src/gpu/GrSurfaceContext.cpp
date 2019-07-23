@@ -172,7 +172,7 @@ bool GrSurfaceContext::readPixels(const GrPixelInfo& origDstInfo, void* dst, siz
     bool flip = srcProxy->origin() == kBottomLeft_GrSurfaceOrigin;
 
     auto supportedRead = caps->supportedReadPixelsColorType(
-            srcProxy->config(), srcProxy->backendFormat(), dstInfo.colorType());
+            this->colorSpaceInfo().colorType(), srcProxy->backendFormat(), dstInfo.colorType());
 
     bool makeTight = !caps->readPixelsRowBytesSupport() && tightRowBytes != rowBytes;
 
@@ -308,7 +308,8 @@ bool GrSurfaceContext::writePixels(const GrPixelInfo& origSrcInfo, const void* s
         GrSurfaceOrigin tempOrigin =
                 this->asRenderTargetContext() ? kTopLeft_GrSurfaceOrigin : dstProxy->origin();
         auto tempProxy = direct->priv().proxyProvider()->createProxy(
-                format, desc, tempOrigin, SkBackingFit::kApprox, SkBudgeted::kYes);
+                format, desc, GrRenderable::kNo, tempOrigin, SkBackingFit::kApprox,
+                SkBudgeted::kYes, GrProtected::kNo);
 
         if (!tempProxy) {
             return false;
@@ -403,13 +404,17 @@ bool GrSurfaceContext::copy(GrSurfaceProxy* src, const SkIRect& srcRect, const S
     SkDEBUGCODE(this->validate();)
     GR_AUDIT_TRAIL_AUTO_FRAME(this->auditTrail(), "GrSurfaceContextPriv::copy");
 
+    const GrCaps* caps = fContext->priv().caps();
+
     SkASSERT(src->backendFormat().textureType() != GrTextureType::kExternal);
     SkASSERT(src->origin() == this->asSurfaceProxy()->origin());
-    SkASSERT(src->config() == this->asSurfaceProxy()->config());
+    SkASSERT(caps->makeConfigSpecific(src->config(), src->backendFormat()) ==
+             caps->makeConfigSpecific(this->asSurfaceProxy()->config(),
+                                      this->asSurfaceProxy()->backendFormat()));
 
     GrSurfaceProxy* dst = this->asSurfaceProxy();
 
-    if (!fContext->priv().caps()->canCopySurface(dst, src, srcRect, dstPoint)) {
+    if (!caps->canCopySurface(dst, src, srcRect, dstPoint)) {
         return false;
     }
 

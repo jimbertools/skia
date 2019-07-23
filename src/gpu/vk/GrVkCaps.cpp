@@ -11,6 +11,7 @@
 #include "include/gpu/vk/GrVkExtensions.h"
 #include "src/gpu/GrRenderTargetProxy.h"
 #include "src/gpu/GrShaderCaps.h"
+#include "src/gpu/GrUtil.h"
 #include "src/gpu/SkGr.h"
 #include "src/gpu/vk/GrVkCaps.h"
 #include "src/gpu/vk/GrVkInterface.h"
@@ -59,26 +60,6 @@ GrVkCaps::GrVkCaps(const GrContextOptions& contextOptions, const GrVkInterface* 
                isProtected);
 }
 
-bool GrVkCaps::initDescForDstCopy(const GrRenderTargetProxy* src, GrSurfaceDesc* desc,
-                                  bool* rectsMustMatch, bool* disallowSubrect) const {
-    // Vk doesn't use rectsMustMatch or disallowSubrect. Always return false.
-    *rectsMustMatch = false;
-    *disallowSubrect = false;
-
-    // We can always succeed here with either a CopyImage (none msaa src) or ResolveImage (msaa).
-    // For CopyImage we can make a simple texture, for ResolveImage we require the dst to be a
-    // render target as well.
-    desc->fConfig = src->config();
-    if (src->numSamples() > 1 || src->asTextureProxy()) {
-        desc->fFlags = kRenderTarget_GrSurfaceFlag;
-    } else {
-        // Just going to use CopyImage here
-        desc->fFlags = kNone_GrSurfaceFlags;
-    }
-
-    return true;
-}
-
 static int get_compatible_format_class(GrPixelConfig config) {
     switch (config) {
         case kAlpha_8_GrPixelConfig:
@@ -104,7 +85,6 @@ static int get_compatible_format_class(GrPixelConfig config) {
             return 4;
         case kRGBA_half_GrPixelConfig:
         case kRGBA_half_Clamped_GrPixelConfig:
-        case kRG_float_GrPixelConfig:
             return 5;
         case kRGBA_float_GrPixelConfig:
             return 6;
@@ -113,6 +93,7 @@ static int get_compatible_format_class(GrPixelConfig config) {
         case kUnknown_GrPixelConfig:
         case kAlpha_8_as_Alpha_GrPixelConfig:
         case kGray_8_as_Lum_GrPixelConfig:
+        case kAlpha_half_as_Lum_GrPixelConfig:
             SK_ABORT("Unsupported Vulkan pixel config");
             return 0;
 
@@ -650,7 +631,6 @@ static bool format_is_srgb(VkFormat format) {
 
     switch (format) {
         case VK_FORMAT_R8G8B8A8_SRGB:
-        case VK_FORMAT_B8G8R8A8_SRGB:
             return true;
         default:
             return false;
@@ -672,9 +652,7 @@ static constexpr VkFormat kVkFormats[] = {
     VK_FORMAT_B4G4R4A4_UNORM_PACK16,
     VK_FORMAT_R4G4B4A4_UNORM_PACK16,
     VK_FORMAT_R32G32B32A32_SFLOAT,
-    VK_FORMAT_R32G32_SFLOAT,
     VK_FORMAT_R8G8B8A8_SRGB,
-    VK_FORMAT_B8G8R8A8_SRGB,
     VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK,
     VK_FORMAT_R16_UNORM,
     VK_FORMAT_R16G16_UNORM,
@@ -751,6 +729,12 @@ void GrVkCaps::FormatInfo::initSampleCounts(const GrVkInterface* interface,
     if (kImagination_VkVendor == physProps.vendorID) {
         // MSAA does not work on imagination
         return;
+    }
+    if (kIntel_VkVendor == physProps.vendorID) {
+        // MSAA on Intel before Gen 9 is slow and/or buggy
+        if (GrGetIntelGpuFamily(physProps.deviceID) < kFirstGen9_IntelGpuFamily) {
+            return;
+        }
     }
     if (flags & VK_SAMPLE_COUNT_2_BIT) {
         fColorSampleCounts.push_back(2);
@@ -913,6 +897,11 @@ GrCaps::SurfaceReadPixelsSupport GrVkCaps::surfaceSupportsReadPixels(
         if (tex->ycbcrConversionInfo().isValid()) {
             return SurfaceReadPixelsSupport::kCopyToTexture2D;
         }
+        // We can't directly read from a compressed format
+        SkImage::CompressionType compressionType;
+        if (GrVkFormatToCompressionType(tex->imageFormat(), &compressionType)) {
+            return SurfaceReadPixelsSupport::kCopyToTexture2D;
+        }
     }
     return SurfaceReadPixelsSupport::kSupported;
 }
@@ -1010,7 +999,7 @@ static GrPixelConfig validate_image_info(VkFormat format, GrColorType ct, bool h
             break;
         case GrColorType::kAlpha_F16:
             if (VK_FORMAT_R16_SFLOAT == format) {
-                return kAlpha_half_GrPixelConfig;
+                return kAlpha_half_as_Red_GrPixelConfig;
             }
             break;
         case GrColorType::kRGBA_F16:
@@ -1021,11 +1010,6 @@ static GrPixelConfig validate_image_info(VkFormat format, GrColorType ct, bool h
         case GrColorType::kRGBA_F16_Clamped:
             if (VK_FORMAT_R16G16B16A16_SFLOAT == format) {
                 return kRGBA_half_Clamped_GrPixelConfig;
-            }
-            break;
-        case GrColorType::kRG_F32:
-            if (VK_FORMAT_R32G32_SFLOAT == format) {
-                return kRG_float_GrPixelConfig;
             }
             break;
         case GrColorType::kRGBA_F32:
@@ -1147,6 +1131,8 @@ GrBackendFormat GrVkCaps::getBackendFormatFromCompressionType(
     return {};
 }
 
+bool GrVkCaps::canClearTextureOnCreation() const { return true; }
+
 #ifdef SK_DEBUG
 static bool format_color_type_valid_pair(VkFormat vkFormat, GrColorType colorType) {
     switch (colorType) {
@@ -1171,7 +1157,7 @@ static bool format_color_type_valid_pair(VkFormat vkFormat, GrColorType colorTyp
         case GrColorType::kRG_88:
             return VK_FORMAT_R8G8_UNORM == vkFormat;
         case GrColorType::kBGRA_8888:
-            return VK_FORMAT_B8G8R8A8_UNORM == vkFormat || VK_FORMAT_B8G8R8A8_SRGB == vkFormat;
+            return VK_FORMAT_B8G8R8A8_UNORM == vkFormat;
         case GrColorType::kRGBA_1010102:
             return VK_FORMAT_A2B10G10R10_UNORM_PACK32 == vkFormat;
         case GrColorType::kGray_8:
@@ -1182,8 +1168,6 @@ static bool format_color_type_valid_pair(VkFormat vkFormat, GrColorType colorTyp
             return VK_FORMAT_R16G16B16A16_SFLOAT == vkFormat;
         case GrColorType::kRGBA_F16_Clamped:
             return VK_FORMAT_R16G16B16A16_SFLOAT == vkFormat;
-        case GrColorType::kRG_F32:
-            return VK_FORMAT_R32G32_SFLOAT == vkFormat;
         case GrColorType::kRGBA_F32:
             return VK_FORMAT_R32G32B32A32_SFLOAT == vkFormat;
         case GrColorType::kR_16:
@@ -1259,5 +1243,62 @@ size_t GrVkCaps::onTransferFromOffsetAlignment(GrColorType bufferColorType) cons
         case 2:     return 2 * bpp;
         // bpp is not a multiple of 2.
         default:    return 4 * bpp;
+    }
+}
+
+GrCaps::SupportedRead GrVkCaps::supportedReadPixelsColorType(
+        GrColorType srcColorType, const GrBackendFormat& srcBackendFormat,
+        GrColorType dstColorType) const {
+    const VkFormat* vkFormat = srcBackendFormat.getVkFormat();
+    if (!vkFormat) {
+        return {GrSwizzle(), GrColorType::kUnknown};
+    }
+
+    switch (*vkFormat) {
+        case VK_FORMAT_R8G8B8A8_UNORM:
+            return {GrSwizzle::RGBA(), GrColorType::kRGBA_8888};
+        case VK_FORMAT_R8_UNORM:
+            if (srcColorType == GrColorType::kAlpha_8) {
+                return {GrSwizzle::RGBA(), GrColorType::kAlpha_8};
+            } else if (srcColorType == GrColorType::kGray_8) {
+                return {GrSwizzle::RGBA(), GrColorType::kGray_8};
+            }
+        case VK_FORMAT_B8G8R8A8_UNORM:
+            return {GrSwizzle::RGBA(), GrColorType::kBGRA_8888};
+        case VK_FORMAT_R5G6B5_UNORM_PACK16:
+            return {GrSwizzle::RGBA(), GrColorType::kBGR_565};
+        case VK_FORMAT_R16G16B16A16_SFLOAT:
+            if (srcColorType == GrColorType::kRGBA_F16) {
+                return {GrSwizzle::RGBA(), GrColorType::kRGBA_F16};
+            } else if (srcColorType == GrColorType::kRGBA_F16_Clamped){
+                return {GrSwizzle::RGBA(), GrColorType::kRGBA_F16_Clamped};
+            }
+        case VK_FORMAT_R16_SFLOAT:
+            return {GrSwizzle::RGBA(), GrColorType::kAlpha_F16};
+        case VK_FORMAT_R8G8B8_UNORM:
+            return {GrSwizzle::RGBA(), GrColorType::kRGB_888x};
+        case VK_FORMAT_R8G8_UNORM:
+            return {GrSwizzle::RGBA(), GrColorType::kRG_88};
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+            return {GrSwizzle::RGBA(), GrColorType::kRGBA_1010102};
+        case VK_FORMAT_B4G4R4A4_UNORM_PACK16:
+            return {GrSwizzle::RGBA(), GrColorType::kABGR_4444};
+        case VK_FORMAT_R4G4B4A4_UNORM_PACK16:
+            return {GrSwizzle::RGBA(), GrColorType::kABGR_4444};
+        case VK_FORMAT_R32G32B32A32_SFLOAT:
+            return {GrSwizzle::RGBA(), GrColorType::kRGBA_F32};
+        case VK_FORMAT_R8G8B8A8_SRGB:
+            return {GrSwizzle::RGBA(), GrColorType::kRGBA_8888_SRGB};
+        case VK_FORMAT_R16_UNORM:
+            return {GrSwizzle::RGBA(), GrColorType::kR_16};
+        case VK_FORMAT_R16G16_UNORM:
+            return {GrSwizzle::RGBA(), GrColorType::kRG_1616};
+        // Experimental (for Y416 and mutant P016/P010)
+        case VK_FORMAT_R16G16B16A16_UNORM:
+            return {GrSwizzle::RGBA(), GrColorType::kRGBA_16161616};
+        case VK_FORMAT_R16G16_SFLOAT:
+            return {GrSwizzle::RGBA(), GrColorType::kRG_F16};
+        default:
+            return {GrSwizzle(), GrColorType::kUnknown};
     }
 }

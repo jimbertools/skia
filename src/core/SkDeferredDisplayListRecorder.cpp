@@ -139,10 +139,8 @@ bool SkDeferredDisplayListRecorder::init() {
     }
 
     GrSurfaceDesc desc;
-    desc.fFlags = kRenderTarget_GrSurfaceFlag;
     desc.fWidth = fCharacterization.width();
     desc.fHeight = fCharacterization.height();
-    desc.fIsProtected = fCharacterization.isProtected();
     desc.fConfig = config;
     desc.fSampleCnt = fCharacterization.sampleCount();
 
@@ -178,7 +176,12 @@ bool SkDeferredDisplayListRecorder::init() {
             optionalTextureInfo,
             SkBackingFit::kExact,
             SkBudgeted::kYes,
+            fCharacterization.isProtected(),
             fCharacterization.vulkanSecondaryCBCompatible());
+
+    if (!proxy) {
+        return false;
+    }
 
     sk_sp<GrSurfaceContext> c = fContext->priv().makeWrappedSurfaceContext(
             std::move(proxy),
