@@ -59,6 +59,7 @@ CanvasKit.onRuntimeInitialized = function() {
 
     options = new CanvasKit.CodecOptions();
     options.frameindex(frame);
+    options.priorframe(frame-1);
 
     var result = this._getPixels(imageInfo, pPtr, rowBytes, options);
     if (result != CanvasKit.CodecResult.kSuccess) {
@@ -196,6 +197,20 @@ CanvasKit.onRuntimeInitialized = function() {
       0, 0,  1,
     ];
   };
+
+  CanvasKit.SkPath.prototype.getBounds = function() {
+    return this._getBounds()
+  }
+
+  CanvasKit.SkPath.prototype.width = function() {
+    var bounds = this.getBounds();
+    return bounds.fRight - bounds.fLeft;
+  }
+
+  CanvasKit.SkPath.prototype.height = function() {
+    var bounds = this.getBounds();
+    return bounds.fBottom - bounds.fTop;
+  }
 
   CanvasKit.SkPath.prototype.addArc = function(oval, startAngle, sweepAngle) {
     // see arc() for the HTMLCanvas version

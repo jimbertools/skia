@@ -1010,7 +1010,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
 
         .function("setFillType", &SkPath::setFillType)
         .function("getFillType", &SkPath::getFillType)
-        .function("getBounds", &SkPath::getBounds)
+        .function("_getBounds", &SkPath::getBounds)
         .function("computeTightBounds", &SkPath::computeTightBounds)
         .function("equals", &Equals)
         .function("copy", &CopyPath)
@@ -1198,6 +1198,12 @@ EMSCRIPTEN_BINDINGS(Skia) {
         }))  
          .function("frameindex", optional_override([](SkCodec::Options& self)->int {
             return self.fFrameIndex;
+        }))
+        .function("priorframe", optional_override([](SkCodec::Options& self, int frameval)->void {
+            self.fPriorFrame = frameval;
+        }))  
+        .function("priorframe", optional_override([](SkCodec::Options& self)->int {
+            return self.fPriorFrame;
         }));
     
 
