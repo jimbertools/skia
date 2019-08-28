@@ -242,4 +242,5 @@ ${EMCXX} \
     -s WARN_UNALIGNED=1 \
     -s USE_WEBGL2=0 \
     -s WASM=1 \
-    -o $BUILD_DIR/canvaskit.js
+    -o $BUILD_DIR/canvaskit.js \
+    -g1

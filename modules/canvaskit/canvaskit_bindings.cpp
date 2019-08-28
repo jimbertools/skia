@@ -36,6 +36,8 @@
 #include "include/core/SkVertices.h"
 #include "include/core/SkStream.h"
 #include "include/codec/SkCodec.h"
+#include "include/core/SkDrawLooper.h"
+#include "include/effects/SkBlurDrawLooper.h"
 #include "include/effects/SkCornerPathEffect.h"
 #include "include/effects/SkDashPathEffect.h"
 #include "include/effects/SkDiscretePathEffect.h"
@@ -623,6 +625,9 @@ EMSCRIPTEN_BINDINGS(Skia) {
     }), allow_raw_pointers());
 
     function("getSkDataBytes", &getSkDataBytes, allow_raw_pointers());
+    function("getSkImageInfo", optional_override([](SimpleImageInfo ii)->SkImageInfo {
+        return toSkImageInfo(ii);
+     }));
     function("MakeSkCornerPathEffect", &SkCornerPathEffect::Make, allow_raw_pointers());
     function("MakeSkDiscretePathEffect", &SkDiscretePathEffect::Make, allow_raw_pointers());
     function("MakeBlurMaskFilter", optional_override([](SkBlurStyle style, SkScalar sigma, bool respectCTM)->sk_sp<SkMaskFilter> {
@@ -748,8 +753,16 @@ EMSCRIPTEN_BINDINGS(Skia) {
         }));
 #endif
 
+    class_<SkSurfaceProps>("SkSurfaceProps")
+    
+     .class_function("create", optional_override([]()->SkSurfaceProps {
+  
+            return SkSurfaceProps(SkSurfaceProps::InitType::kLegacyFontHost_InitType);
+        }));
+
     class_<SkCanvas>("SkCanvas")
         .constructor<>()
+        .constructor<int , int , const SkSurfaceProps* >()
         .function("clear", &SkCanvas::clear)
         .function("clipPath", select_overload<void (const SkPath&, SkClipOp, bool)>(&SkCanvas::clipPath))
         .function("clipRect", select_overload<void (const SkRect&, SkClipOp, bool)>(&SkCanvas::clipRect))
@@ -884,7 +897,8 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("setScaleX", &SkFont::setScaleX)
         .function("setSize", &SkFont::setSize)
         .function("setSkewX", &SkFont::setSkewX)
-        .function("setTypeface", &SkFont::setTypeface, allow_raw_pointers());
+        .function("setTypeface", &SkFont::setTypeface, allow_raw_pointers())
+        .function("setEmbolden", &SkFont::setEmbolden);
 
     class_<ShapedText>("ShapedText")
         .constructor<ShapedTextOpts>()
@@ -976,7 +990,8 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("setStrokeJoin", &SkPaint::setStrokeJoin)
         .function("setStrokeMiter", &SkPaint::setStrokeMiter)
         .function("setStrokeWidth", &SkPaint::setStrokeWidth)
-        .function("setStyle", &SkPaint::setStyle);
+        .function("setStyle", &SkPaint::setStyle)
+        .function("setDrawLooper",&SkPaint::setDrawLooper);
 
     class_<SkPathEffect>("SkPathEffect")
         .smart_ptr<sk_sp<SkPathEffect>>("sk_sp<SkPathEffect>");
@@ -1076,12 +1091,21 @@ EMSCRIPTEN_BINDINGS(Skia) {
 
     class_<SkShader>("SkShader")
         .smart_ptr<sk_sp<SkShader>>("sk_sp<SkShader>");
-
+    
+    class_<SkImageInfo>("SkImageInfo");
+ 
     class_<SkSurface>("SkSurface")
         .smart_ptr<sk_sp<SkSurface>>("sk_sp<SkSurface>")
         .function("_flush", select_overload<void()>(&SkSurface::flush))
         .function("getCanvas", &SkSurface::getCanvas, allow_raw_pointers())
+        .function("drawCanvas", optional_override([](SkSurface& self, SkCanvas* canvas, SkScalar x, SkScalar y,const SkPaint* paint)->void {
+           return self.draw(canvas,x, y,paint);
+        }),allow_raw_pointers())
         .function("height", &SkSurface::height)
+        .function("_readPixels", optional_override([](SkSurface& self, const SkImageInfo& dstInfo,  uintptr_t pixels, size_t rowsize, int x, int y)->bool {
+            auto ptr = reinterpret_cast<void*>(pixels);
+            return self.readPixels(dstInfo, ptr, rowsize, x, y);
+        }),allow_raw_pointers())
         .function("makeImageSnapshot", select_overload<sk_sp<SkImage>()>(&SkSurface::makeImageSnapshot))
         .function("makeImageSnapshot", select_overload<sk_sp<SkImage>(const SkIRect& bounds)>(&SkSurface::makeImageSnapshot))
         .function("makeSurface", optional_override([](SkSurface& self, SimpleImageInfo sii)->sk_sp<SkSurface> {
@@ -1091,6 +1115,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
 
     class_<SkTextBlob>("SkTextBlob")
         .smart_ptr<sk_sp<SkTextBlob>>("sk_sp<SkTextBlob>>")
+        .function("bounds", &SkTextBlob::bounds)
         .class_function("_MakeFromRSXform", optional_override([](uintptr_t /* char* */ sptr,
                                                               size_t strBtyes,
                                                               uintptr_t /* SkRSXform* */ xptr,
@@ -1173,7 +1198,13 @@ EMSCRIPTEN_BINDINGS(Skia) {
 
     ;
 //.smart_ptr<std::unique_ptr<SkCodec>>("std::unique_ptr<SkCodec>")
-    
+    class_<SkDrawLooper>("SkDrawLooper")
+    .smart_ptr<sk_sp<SkDrawLooper>>("sk_sp<SkDrawLooper>");
+
+    function("_MakeSkBlurDrawLooper",optional_override([](SkColor color, SkScalar sigma, SkScalar dx, SkScalar dy )->sk_sp<SkDrawLooper> {
+        return SkBlurDrawLooper::Make(color, sigma, dx, dy);
+    }), allow_raw_pointers());
+
     class_<SkCodec>("SkCodec")
        .class_function("_MakeFromStream", optional_override([](SkMemoryStream& stream)->std::unique_ptr<SkCodec> {
             

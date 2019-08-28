@@ -54,7 +54,7 @@
       // element, or specify a height for when a context is provided.
       CanvasKit.MakeWebGLCanvasSurface = function(arg, width, height) {
         var canvas = arg;
-        if (canvas.tagName !== 'CANVAS') {
+        if (canvas.tagName !== undefined && canvas.tagName !== 'CANVAS') {
           canvas = document.getElementById(arg);
           if (!canvas) {
             throw 'Canvas with id ' + arg + ' was not found';
