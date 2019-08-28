@@ -37,7 +37,16 @@ CanvasKit.onRuntimeInitialized = function() {
     return this._MakeFromStream(memoryStream);
     
   };
+  CanvasKit.MakeSkBlurDrawLooper = function(color, sigma, dx, dy ){
+    return this._MakeSkBlurDrawLooper(color, sigma, dx, dy);
+  };
 
+  CanvasKit.UintColor = function(color) {
+    var colors = this.getColorComponents(color);
+    return this.Color(colors[0], colors[1], colors[2]);
+  };
+  
+  
   CanvasKit.SkCodec.prototype.readPixels = function(imageInfo, frame){
 
     //SimpleImageInfo di, uintptr_t /* uint8_t* */ pPtr, size_t dstRowBytes, SkCodec::Options options
@@ -57,9 +66,9 @@ CanvasKit.onRuntimeInitialized = function() {
     var pBytes = rowBytes * imageInfo.height;
     var pPtr = CanvasKit._malloc(pBytes);
 
-    options = new CanvasKit.CodecOptions();
+    var options = new CanvasKit.CodecOptions();
     options.frameindex(frame);
-
+    options.priorframe(0);
     var result = this._getPixels(imageInfo, pPtr, rowBytes, options);
     if (result != CanvasKit.CodecResult.kSuccess) {
       SkDebug("Could not read pixels with the given inputs " + result);
@@ -694,6 +703,49 @@ CanvasKit.onRuntimeInitialized = function() {
     saveBytesToFile(bytes, skpName);
     data.delete();
   }
+
+
+  CanvasKit.SkSurface.prototype.readPixels = function(imageInfo, srcX, srcY) {
+    var rowBytes;
+    console.log(imageInfo.colorType, "=?", CanvasKit.ColorType.RGBA_8888)
+    switch (imageInfo.colorType){
+      case CanvasKit.ColorType.RGBA_8888:
+        rowBytes = imageInfo.width * 4; // 1 byte per channel == 4 bytes per pixel in 8888
+        break;
+      case CanvasKit.ColorType.RGBA_F32:
+        rowBytes = imageInfo.width * 16; // 4 bytes per channel == 16 bytes per pixel in F32
+        break;
+      default:
+        SkDebug("Colortype not yet supported");
+        return;
+    }
+    var pBytes = rowBytes * imageInfo.height;
+    var pPtr = CanvasKit._malloc(pBytes);
+
+    if (!this._readPixels(imageInfo, pPtr, rowBytes, srcX, srcY)) {
+      SkDebug("Could not read pixels with the given inputs");
+      return null;
+    }
+
+    // Put those pixels into a typed array of the right format and then
+    // make a copy with slice() that we can return.
+
+    var retVal = null;
+    switch (imageInfo.colorType){
+      case CanvasKit.ColorType.RGBA_8888:
+        retVal = new Uint8Array(CanvasKit.HEAPU8.buffer, pPtr, pBytes).slice();
+        break;
+      case CanvasKit.ColorType.RGBA_F32:
+        retVal = new Float32Array(CanvasKit.HEAPU32.buffer, pPtr, pBytes).slice();
+        break;
+    }
+
+    // Free the allocated pixels in the WASM memory
+    CanvasKit._free(pPtr);
+    return retVal;
+
+  }
+
 
   CanvasKit.SkSurface.prototype.captureFrameAsSkPicture = function(drawFrame) {
     // Set up SkPictureRecorder
