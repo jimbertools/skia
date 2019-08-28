@@ -10,6 +10,7 @@
 #include "include/gpu/GrContext.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/GrSurfaceContext.h"
 #include "src/gpu/SkGr.h"
 #include "tests/Test.h"
@@ -163,15 +164,6 @@ static sk_sp<SkColorSpace> encoding_as_color_space(Encoding encoding) {
     return nullptr;
 }
 
-static GrPixelConfig encoding_as_pixel_config(Encoding encoding) {
-    switch (encoding) {
-        case Encoding::kUntagged: return kRGBA_8888_GrPixelConfig;
-        case Encoding::kLinear:   return kRGBA_8888_GrPixelConfig;
-        case Encoding::kSRGB:     return kSRGBA_8888_GrPixelConfig;
-    }
-    return kUnknown_GrPixelConfig;
-}
-
 static const char* encoding_as_str(Encoding encoding) {
     switch (encoding) {
         case Encoding::kUntagged: return "untagged";
@@ -194,23 +186,13 @@ static std::unique_ptr<uint32_t[]> make_data() {
     return data;
 }
 
-static sk_sp<GrSurfaceContext> make_surface_context(Encoding contextEncoding, GrContext* context,
-                                                    skiatest::Reporter* reporter) {
-    GrSurfaceDesc desc;
-    desc.fFlags = kRenderTarget_GrSurfaceFlag;
-    desc.fWidth = kW;
-    desc.fHeight = kH;
-    desc.fConfig = encoding_as_pixel_config(contextEncoding);
-
-    GrSRGBEncoded srgbEncoded = GrSRGBEncoded::kNo;
-    GrColorType colorType = GrPixelConfigToColorTypeAndEncoding(desc.fConfig, &srgbEncoded);
-    const GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromGrColorType(colorType, srgbEncoded);
-
-    auto surfaceContext = context->priv().makeDeferredSurfaceContext(
-            format, desc, kBottomLeft_GrSurfaceOrigin, GrMipMapped::kNo, SkBackingFit::kExact,
-            SkBudgeted::kNo, colorType, kPremul_SkAlphaType,
-            encoding_as_color_space(contextEncoding));
+static std::unique_ptr<GrSurfaceContext> make_surface_context(Encoding contextEncoding,
+                                                              GrContext* context,
+                                                              skiatest::Reporter* reporter) {
+    auto surfaceContext = context->priv().makeDeferredRenderTargetContext(
+            SkBackingFit::kExact, kW, kH, GrColorType::kRGBA_8888,
+            encoding_as_color_space(contextEncoding), 1, GrMipMapped::kNo,
+            kBottomLeft_GrSurfaceOrigin, nullptr, SkBudgeted::kNo, GrProtected::kNo);
     if (!surfaceContext) {
         ERRORF(reporter, "Could not create %s surface context.", encoding_as_str(contextEncoding));
     }
@@ -246,8 +228,8 @@ static void test_write_read(Encoding contextEncoding, Encoding writeEncoding, En
 // are sRGB, linear, or untagged RGBA_8888.
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SRGBReadWritePixels, reporter, ctxInfo) {
     GrContext* context = ctxInfo.grContext();
-    if (!context->priv().caps()->isConfigRenderable(kSRGBA_8888_GrPixelConfig) &&
-        !context->priv().caps()->isConfigTexturable(kSRGBA_8888_GrPixelConfig)) {
+    if (!context->priv().caps()->getDefaultBackendFormat(GrColorType::kRGBA_8888_SRGB,
+                                                         GrRenderable::kNo).isValid()) {
         return;
     }
     // We allow more error on GPUs with lower precision shader variables.

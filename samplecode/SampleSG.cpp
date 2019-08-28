@@ -72,13 +72,13 @@ protected:
         fScene->render(canvas);
     }
 
-    Click* onFindClickHandler(SkScalar x, SkScalar y, unsigned modi) override {
+    Click* onFindClickHandler(SkScalar x, SkScalar y, ModifierKey modi) override {
         if (auto node = fScene->nodeAt({x, y})) {
-            Click* click = new Click(this);
+            Click* click = new Click();
             click->fMeta.setPtr("node", (void*)node);
             return click;
         }
-        return this->INHERITED::onFindClickHandler(x, y, modi);
+        return nullptr;
     }
 
     bool onClick(Click* click) override {

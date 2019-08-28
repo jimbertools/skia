@@ -53,6 +53,10 @@ public:
         return {this->colorType(), at, this->refColorSpace(), this->width(), this->height()};
     }
 
+    GrPixelInfo makeWH(int width, int height) {
+        return {this->colorType(), this->alphaType(), this->refColorSpace(), width, height};
+    }
+
     GrColorType colorType() const { return fColorInfo.colorType(); }
 
     SkAlphaType alphaType() const { return fColorInfo.alphaType(); }
@@ -103,6 +107,6 @@ private:
 // Swizzle param is applied after loading and before converting from srcInfo to dstInfo.
 bool GrConvertPixels(const GrPixelInfo& dstInfo,       void* dst, size_t dstRB,
                      const GrPixelInfo& srcInfo, const void* src, size_t srcRB,
-                     bool flipY = false, GrSwizzle swizzle = GrSwizzle{});
+                     bool flipY = false);
 
 #endif

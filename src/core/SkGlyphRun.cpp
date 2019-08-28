@@ -187,7 +187,7 @@ void SkGlyphRunBuilder::drawTextBlob(const SkPaint& paint, const SkTextBlob& blo
 
     for (SkTextBlobRunIterator it(&blob); !it.done(); it.next()) {
         if (it.positioning() != SkTextBlobRunIterator::kRSXform_Positioning) {
-            simplifyTextBlobIgnoringRSXForm(paint, it, positions);
+            simplifyTextBlobIgnoringRSXForm(it, positions);
         } else {
             // Handle kRSXform_Positioning
             if (!this->empty()) {
@@ -224,7 +224,7 @@ void SkGlyphRunBuilder::textBlobToGlyphRunListIgnoringRSXForm(
     SkPoint* positions = fPositions;
 
     for (SkTextBlobRunIterator it(&blob); !it.done(); it.next()) {
-        simplifyTextBlobIgnoringRSXForm(paint, it, positions);
+        simplifyTextBlobIgnoringRSXForm(it, positions);
         positions += it.glyphCount();
     }
 
@@ -233,8 +233,7 @@ void SkGlyphRunBuilder::textBlobToGlyphRunListIgnoringRSXForm(
     }
 }
 
-void SkGlyphRunBuilder::simplifyTextBlobIgnoringRSXForm(const SkPaint& paint,
-                                                        const SkTextBlobRunIterator& it,
+void SkGlyphRunBuilder::simplifyTextBlobIgnoringRSXForm(const SkTextBlobRunIterator& it,
                                                         SkPoint* positions) {
     size_t runSize = it.glyphCount();
 
@@ -338,16 +337,15 @@ void SkGlyphRunBuilder::simplifyDrawText(
     auto runSize = glyphIDs.size();
 
     if (!glyphIDs.empty()) {
-        fScratchAdvances.resize(runSize);
         SkStrikeSpec strikeSpec = SkStrikeSpec::MakeWithNoDevice(font);
-        auto cache = strikeSpec.findOrCreateExclusiveStrike();
-        cache->getAdvances(glyphIDs, fScratchAdvances.data());
+        SkBulkGlyphMetrics storage{strikeSpec};
+        auto glyphs = storage.glyphs(glyphIDs);
 
         SkPoint endOfLastGlyph = origin;
-
-        for (size_t i = 0; i < runSize; i++) {
-            positions[i] = endOfLastGlyph;
-            endOfLastGlyph += fScratchAdvances[i];
+        SkPoint* cursor = positions;
+        for (auto glyph : glyphs) {
+            *cursor++ = endOfLastGlyph;
+            endOfLastGlyph += glyph->advanceVector();
         }
 
         this->makeGlyphRun(

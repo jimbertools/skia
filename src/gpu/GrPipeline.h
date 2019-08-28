@@ -13,7 +13,6 @@
 #include "src/gpu/GrColor.h"
 #include "src/gpu/GrFragmentProcessor.h"
 #include "src/gpu/GrNonAtomicRef.h"
-#include "src/gpu/GrPendingIOResource.h"
 #include "src/gpu/GrProcessorSet.h"
 #include "src/gpu/GrProgramDesc.h"
 #include "src/gpu/GrScissorState.h"
@@ -96,7 +95,14 @@ public:
      * must be "Porter Duff" (<= kLastCoeffMode). If using GrScissorTest::kEnabled, the caller must
      * specify a scissor rectangle through the DynamicState struct.
      **/
-    GrPipeline(GrScissorTest, SkBlendMode, const GrSwizzle& outputSwizzle,
+    GrPipeline(GrScissorTest scissor, SkBlendMode blend, const GrSwizzle& outputSwizzle,
+               InputFlags flags = InputFlags::kNone,
+               const GrUserStencilSettings* stencil = &GrUserStencilSettings::kUnused)
+            : GrPipeline(scissor, GrPorterDuffXPFactory::MakeNoCoverageXP(blend), outputSwizzle,
+                         flags, stencil) {
+    }
+
+    GrPipeline(GrScissorTest, sk_sp<const GrXferProcessor>, const GrSwizzle& outputSwizzle,
                InputFlags = InputFlags::kNone,
                const GrUserStencilSettings* = &GrUserStencilSettings::kUnused);
 
@@ -109,9 +115,6 @@ public:
 
     ///////////////////////////////////////////////////////////////////////////
     /// @name GrFragmentProcessors
-
-    // Make the renderTargetContext's GrOpList be dependent on any GrOpLists in this pipeline
-    void addDependenciesTo(GrOpList* recipient, const GrCaps&) const;
 
     int numColorFragmentProcessors() const { return fNumColorProcessors; }
     int numCoverageFragmentProcessors() const {
@@ -138,7 +141,7 @@ public:
             *offset = fDstTextureOffset;
         }
 
-        return fDstTextureProxy ? fDstTextureProxy->asTextureProxy() : nullptr;
+        return fDstTextureProxy.get();
     }
 
     GrTexture* peekDstTexture(SkIPoint* offset = nullptr) const {
@@ -214,7 +217,7 @@ private:
 
     using FragmentProcessorArray = SkAutoSTArray<8, std::unique_ptr<const GrFragmentProcessor>>;
 
-    GrProxyPendingIO fDstTextureProxy;
+    sk_sp<GrTextureProxy> fDstTextureProxy;
     SkIPoint fDstTextureOffset;
     GrWindowRectsState fWindowRectsState;
     const GrUserStencilSettings* fUserStencilSettings;

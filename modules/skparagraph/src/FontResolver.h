@@ -2,7 +2,6 @@
 #ifndef FontResolver_DEFINED
 #define FontResolver_DEFINED
 
-#include "src/core/SkSpan.h"
 #include <memory>
 #include <set>
 #include "include/core/SkFontMgr.h"
@@ -10,46 +9,66 @@
 #include "include/private/SkTHash.h"
 #include "modules/skparagraph/include/FontCollection.h"
 #include "modules/skparagraph/include/TextStyle.h"
+#include "modules/skparagraph/src/TextLine.h"
+#include "src/core/SkSpan.h"
 
 namespace skia {
 namespace textlayout {
 
+struct FontDescr {
+    FontDescr() { }
+    FontDescr(SkFont font, SkScalar height)
+            : fFont(font), fHeight(height), fStart(EMPTY_INDEX) { }
+    bool operator==(const FontDescr& a) const {
+        return this->fFont == a.fFont && this->fHeight == a.fHeight;
+    }
+    SkFont fFont;
+    SkScalar fHeight;
+    TextIndex fStart;
+};
+
 class FontResolver {
 public:
-    FontResolver(sk_sp<FontCollection> fontCollection);
+
+    FontResolver() = default;
     ~FontResolver() = default;
 
-    void findAllFontsForStyledBlock(const TextStyle& style, SkSpan<const char> text);
-    bool findFirst(const char* codepoint, SkFont* font, SkScalar* height);
+    void findAllFontsForAllStyledBlocks(ParagraphImpl* master);
     bool findNext(const char* codepoint, SkFont* font, SkScalar* height);
 
-private:
-    std::pair<SkFont, SkScalar> makeFont(sk_sp<SkTypeface> typeface, SkScalar size,
-                                         SkScalar height);
+    const SkTArray<FontDescr>& switches() const { return fFontSwitches; }
 
-    size_t resolveAllCharactersByFont(std::pair<SkFont, SkScalar> font);
+private:
+    void findAllFontsForStyledBlock(const TextStyle& style, TextRange textRange);
+    FontDescr makeFont(sk_sp<SkTypeface> typeface, SkScalar size, SkScalar height);
+    size_t resolveAllCharactersByFont(const FontDescr& fontDescr);
     void addResolvedWhitespacesToMapping();
 
     struct Hash {
-        uint32_t operator()(const std::pair<SkFont, SkScalar>& key) const {
-            return SkTypeface::UniqueID(key.first.getTypeface()) +
-                   SkScalarCeilToInt(key.first.getSize()) + SkScalarCeilToInt(key.second);
+        uint32_t operator()(const FontDescr& key) const {
+            return SkTypeface::UniqueID(key.fFont.getTypeface()) +
+                   SkScalarCeilToInt(key.fFont.getSize()) +
+                   SkScalarCeilToInt(key.fHeight);
         }
     };
 
     SkUnichar firstUnresolved();
 
     sk_sp<FontCollection> fFontCollection;
+    SkSpan<const char> fText;
+    SkSpan<Block> fStyles;
 
-    SkTHashMap<const char*, std::pair<SkFont, SkScalar>> fFontMapping;
-    SkTHashSet<std::pair<SkFont, SkScalar>, Hash> fResolvedFonts;
-    std::pair<SkFont, SkScalar> fFirstResolvedFont;
+    SkTArray<FontDescr> fFontSwitches;
+    FontDescr* fFontIterator;
+    SkTHashSet<FontDescr, Hash> fResolvedFonts;
+    FontDescr fFirstResolvedFont;
 
+    SkTHashMap<TextIndex, FontDescr> fFontMapping;
     SkTArray<SkUnichar> fCodepoints;
     SkTArray<const char*> fCharacters;
     SkTArray<size_t> fUnresolvedIndexes;
     SkTArray<SkUnichar> fUnresolvedCodepoints;
-    SkTHashMap<size_t, std::pair<SkFont, SkScalar>> fWhitespaces;
+    SkTHashMap<size_t, FontDescr> fWhitespaces;
     size_t fUnresolved;
 };
 }  // namespace textlayout

@@ -65,8 +65,6 @@ public:
     // If the path has never been set, then add a path to glyph.
     const SkPath* preparePath(SkGlyph* glyph, const SkPath* path);
 
-    SkSpan<SkPoint> getAdvances(SkSpan<const SkGlyphID>, SkPoint[]);
-
     /** Returns the number of glyphs for this strike.
     */
     unsigned getGlyphCount() const;
@@ -121,12 +119,11 @@ public:
     SkSpan<const SkGlyph*> prepareImages(SkSpan<const SkPackedGlyphID> glyphIDs,
                                          const SkGlyph* results[]);
 
-    SkSpan<const SkGlyphPos> prepareForDrawing(const SkPackedGlyphID packedGlyphIDs[],
-                                               const SkPoint positions[],
-                                               size_t n,
-                                               int maxDimension,
-                                               PreparationDetail detail,
-                                               SkGlyphPos results[]) override;
+    SkSpan<const SkGlyphPos> prepareForDrawingRemoveEmpty(const SkPackedGlyphID packedGlyphIDs[],
+                                                          const SkPoint positions[],
+                                                          size_t n,
+                                                          int maxDimension,
+                                                          SkGlyphPos results[]) override;
 
     void onAboutToExitScope() override;
 

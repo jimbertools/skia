@@ -17,7 +17,7 @@
 #include "include/utils/SkRandom.h"
 #include "samplecode/Sample.h"
 #include "src/utils/SkUTF.h"
-#include "tools/timer/AnimTimer.h"
+#include "tools/timer/TimeUtils.h"
 
 #define CORNER_RADIUS   12
 
@@ -97,8 +97,7 @@ protected:
 
         {
             SkRect  oval;
-            oval.set(SkIntToScalar(20), SkIntToScalar(30),
-                     SkIntToScalar(100), SkIntToScalar(60));
+            oval.setLTRB(20, 30, 100, 60);
             oval.offset(x, 0);
             fPath.addRoundRect(oval, SkIntToScalar(8), SkIntToScalar(8));
         }
@@ -132,8 +131,8 @@ protected:
         canvas->drawPath(fPath, paint);
     }
 
-    bool onAnimate(const AnimTimer& timer) override {
-        fPhase = timer.scaled(40);
+    bool onAnimate(double nanos) override {
+        fPhase = TimeUtils::Scaled(1e-9 * nanos, 40);
         return true;
     }
 

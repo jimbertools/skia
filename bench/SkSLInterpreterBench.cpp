@@ -53,9 +53,10 @@ protected:
                     fPixels.data() + 3 * fCount,
                 };
 
-                fByteCode->runStriped(fMain, args, 4, fCount, nullptr, 0, nullptr, 0);
+                SkAssertResult(fByteCode->runStriped(fMain, args, 4, fCount,
+                                                     nullptr, 0, nullptr, 0));
             } else {
-                fByteCode->run(fMain, fPixels.data(), nullptr, fCount, nullptr, 0);
+                SkAssertResult(fByteCode->run(fMain, fPixels.data(), nullptr, fCount, nullptr, 0));
             }
         }
     }
@@ -89,10 +90,10 @@ const char* kHighContrastFilterSrc = R"(
     half hue2rgb_Stage2(half p, half q, half t) {
         if (t < 0)  t += 1;
         if (t > 1)  t -= 1;
-        if (t < 1 / 6.)  return p + (q - p) * 6 * t;
-        if (t < 1 / 2.)  return q;
-        if (t < 2 / 3.)  return p + (q - p) * (2 / 3. - t) * 6;
-        return p;
+        return (t < 1 / 6.) ? p + (q - p) * 6 * t
+             : (t < 1 / 2.) ? q
+             : (t < 2 / 3.) ? p + (q - p) * (2 / 3. - t) * 6
+             : p;
     }
     half max(half a, half b) { return a > b ? a : b; }
     half min(half a, half b) { return a < b ? a : b; }
@@ -186,7 +187,7 @@ protected:
         }
 
         // Trigger one run now to check correctness
-        fByteCode->run(fMain, fSrc.data(), fDst.data(), fGroups, nullptr, 0);
+        SkAssertResult(fByteCode->run(fMain, fSrc.data(), fDst.data(), fGroups, nullptr, 0));
         for (int i = 0; i < fGroups; ++i) {
             for (int j = 1; j < fValues; ++j) {
                 SkASSERT(fDst[i * fValues + j] >= fDst[i * fValues + j - 1]);
@@ -196,7 +197,7 @@ protected:
 
     void onDraw(int loops, SkCanvas*) override {
         for (int i = 0; i < loops; i++) {
-            fByteCode->run(fMain, fSrc.data(), fDst.data(), fGroups, nullptr, 0);
+            SkAssertResult(fByteCode->run(fMain, fSrc.data(), fDst.data(), fGroups, nullptr, 0));
         }
     }
 

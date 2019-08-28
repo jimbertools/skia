@@ -23,14 +23,17 @@
 #ifdef SK_VULKAN
 #include "src/gpu/vk/GrVkGpu.h"
 #endif
-
-#ifdef SK_DISABLE_REDUCE_OPLIST_SPLITTING
-static const bool kDefaultReduceOpListSplitting = false;
-#else
-static const bool kDefaultReduceOpListSplitting = false;
+#ifdef SK_DAWN
+#include "src/gpu/dawn/GrDawnGpu.h"
 #endif
 
-class SK_API GrLegacyDirectContext : public GrContext {
+#ifdef SK_DISABLE_REDUCE_OPLIST_SPLITTING
+static const bool kDefaultReduceOpsTaskSplitting = false;
+#else
+static const bool kDefaultReduceOpsTaskSplitting = false;
+#endif
+
+class GrLegacyDirectContext : public GrContext {
 public:
     GrLegacyDirectContext(GrBackendApi backend, const GrContextOptions& options)
             : INHERITED(backend, options)
@@ -79,14 +82,14 @@ protected:
             return false;
         }
 
-        bool reduceOpListSplitting = kDefaultReduceOpListSplitting;
-        if (GrContextOptions::Enable::kNo == this->options().fReduceOpListSplitting) {
-            reduceOpListSplitting = false;
-        } else if (GrContextOptions::Enable::kYes == this->options().fReduceOpListSplitting) {
-            reduceOpListSplitting = true;
+        bool reduceOpsTaskSplitting = kDefaultReduceOpsTaskSplitting;
+        if (GrContextOptions::Enable::kNo == this->options().fReduceOpsTaskSplitting) {
+            reduceOpsTaskSplitting = false;
+        } else if (GrContextOptions::Enable::kYes == this->options().fReduceOpsTaskSplitting) {
+            reduceOpsTaskSplitting = true;
         }
 
-        this->setupDrawingManager(true, reduceOpListSplitting);
+        this->setupDrawingManager(true, reduceOpsTaskSplitting);
 
         SkASSERT(this->caps());
 
@@ -218,3 +221,23 @@ sk_sp<GrContext> GrContext::MakeMetal(void* device, void* queue, const GrContext
 }
 #endif
 
+#ifdef SK_DAWN
+sk_sp<GrContext> GrContext::MakeDawn(const dawn::Device& device) {
+    GrContextOptions defaultOptions;
+    return MakeDawn(device, defaultOptions);
+}
+
+sk_sp<GrContext> GrContext::MakeDawn(const dawn::Device& device, const GrContextOptions& options) {
+    sk_sp<GrContext> context(new GrLegacyDirectContext(GrBackendApi::kDawn, options));
+
+    context->fGpu = GrDawnGpu::Make(device, options, context.get());
+    if (!context->fGpu) {
+        return nullptr;
+    }
+
+    if (!context->init(context->fGpu->refCaps(), nullptr)) {
+        return nullptr;
+    }
+    return context;
+}
+#endif

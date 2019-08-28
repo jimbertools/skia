@@ -11,14 +11,6 @@ class SkCanvas;
 namespace skia {
 namespace textlayout {
 
-struct Block {
-    Block(size_t start, size_t end, const TextStyle& style)
-            : fStart(start), fEnd(end), fStyle(style) {}
-    size_t fStart;
-    size_t fEnd;
-    TextStyle fStyle;
-};
-
 class Paragraph {
 
 public:
@@ -52,6 +44,8 @@ public:
                                                   RectHeightStyle rectHeightStyle,
                                                   RectWidthStyle rectWidthStyle) = 0;
 
+    virtual std::vector<TextBox> GetRectsForPlaceholders() = 0;
+
     // Returns the index of the glyph that corresponds to the provided coordinate,
     // with the top left corner as the origin, and +y direction as down
     virtual PositionWithAffinity getGlyphPositionAtCoordinate(SkScalar dx, SkScalar dy) = 0;
@@ -75,7 +69,6 @@ protected:
     SkScalar fWidth;
     SkScalar fMaxIntrinsicWidth;
     SkScalar fMinIntrinsicWidth;
-    SkScalar fMaxLineWidth;
 };
 }  // namespace textlayout
 }  // namespace skia

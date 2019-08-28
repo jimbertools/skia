@@ -22,12 +22,11 @@
 #include "include/utils/SkTextUtils.h"
 #include "samplecode/Sample.h"
 #include "src/utils/SkUTF.h"
-#include "tools/timer/AnimTimer.h"
 
 #include "include/utils/SkParsePath.h"
 static void testparse() {
     SkRect r;
-    r.set(0, 0, 10, 10.5f);
+    r.setLTRB(0, 0, 10, 10.5f);
     SkPath p, p2;
     SkString str, str2;
 
@@ -79,14 +78,10 @@ class ArcsView : public Sample {
         }
     };
 
-public:
-    SkRect fRect;
+    SkRect fRect = {20, 20, 220, 220};
     sk_sp<MyDrawable> fAnimatingDrawable;
     sk_sp<SkDrawable> fRootDrawable;
 
-    ArcsView() { }
-
-protected:
     SkString name() override { return SkString("Arcs"); }
 
     static void DrawRectWithLines(SkCanvas* canvas, const SkRect& r, const SkPaint& p) {
@@ -114,7 +109,7 @@ protected:
         SkScalar w = 75;
         SkScalar h = 50;
 
-        r.set(0, 0, w, h);
+        r.setWH(w, h);
         paint.setAntiAlias(true);
         paint.setStyle(SkPaint::kStroke_Style);
 
@@ -165,11 +160,8 @@ protected:
 
     void onOnceBeforeDraw() override {
         testparse();
-        fSweep = SkIntToScalar(100);
         this->setBGColor(0xFFDDDDDD);
 
-        fRect.set(0, 0, SkIntToScalar(200), SkIntToScalar(200));
-        fRect.offset(SkIntToScalar(20), SkIntToScalar(20));
         fAnimatingDrawable = sk_make_sp<MyDrawable>(fRect);
 
         SkPictureRecorder recorder;
@@ -181,20 +173,13 @@ protected:
         canvas->drawDrawable(fRootDrawable.get());
     }
 
-    bool onAnimate(const AnimTimer& timer) override {
-        SkScalar angle = SkDoubleToScalar(fmod(timer.secs() * 360 / 24, 360));
+    bool onAnimate(double nanos) override {
+        SkScalar angle = SkDoubleToScalar(fmod(1e-9 * nanos * 360 / 24, 360));
         if (fAnimatingDrawable) {
             fAnimatingDrawable->setSweep(angle);
         }
         return true;
     }
-
-private:
-    SkScalar fSweep;
-
-    typedef Sample INHERITED;
 };
-
-//////////////////////////////////////////////////////////////////////////////
 
 DEF_SAMPLE( return new ArcsView(); )

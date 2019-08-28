@@ -12,7 +12,7 @@
 #include "include/utils/SkRandom.h"
 #include "samplecode/Sample.h"
 #include "src/core/SkPointPriv.h"
-#include "tools/timer/AnimTimer.h"
+#include "tools/timer/TimeUtils.h"
 
 const SkRect gUnitSquare = { -1, -1, 1, 1 };
 
@@ -148,15 +148,15 @@ protected:
         canvas->drawDrawable(fRoot.get());
     }
 
-    bool onAnimate(const AnimTimer& timer) override {
-        fTime = timer.msec();
+    bool onAnimate(double nanos) override {
+        fTime = TimeUtils::NanosToMSec(nanos);
         for (int i = 0; i < N; ++i) {
             fArray[i].fDrawable->setTime(fTime);
         }
         return true;
     }
 
-    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, unsigned modi) override {
+    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, ModifierKey modi) override {
         // search backwards to find the top-most
         for (int i = N - 1; i >= 0; --i) {
             if (fArray[i].fDrawable->hitTest(x, y)) {

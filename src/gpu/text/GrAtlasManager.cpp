@@ -95,8 +95,8 @@ static bool save_pixels(GrContext* context, GrSurfaceProxy* sProxy, GrColorType 
         return false;
     }
 
-    sk_sp<GrSurfaceContext> sContext(context->priv().makeWrappedSurfaceContext(
-            sk_ref_sp(sProxy), colorType, kUnknown_SkAlphaType));
+    auto sContext = context->priv().makeWrappedSurfaceContext(sk_ref_sp(sProxy), colorType,
+                                                              kUnknown_SkAlphaType);
     if (!sContext || !sContext->asTextureProxy()) {
         return false;
     }
@@ -166,8 +166,8 @@ bool GrAtlasManager::initAtlas(GrMaskFormat format) {
         SkISize atlasDimensions = fAtlasConfig.atlasDimensions(format);
         SkISize plotDimensions = fAtlasConfig.plotDimensions(format);
 
-        const GrBackendFormat format = fCaps->getBackendFormatFromGrColorType(grColorType,
-                                                                              GrSRGBEncoded::kNo);
+        const GrBackendFormat format = fCaps->getDefaultBackendFormat(grColorType,
+                                                                      GrRenderable::kNo);
 
         fAtlases[index] = GrDrawOpAtlas::Make(
                 fProxyProvider, format, grColorType,

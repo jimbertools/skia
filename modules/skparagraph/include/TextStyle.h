@@ -8,6 +8,7 @@
 #include "include/core/SkFontMetrics.h"
 #include "include/core/SkFontStyle.h"
 #include "include/core/SkPaint.h"
+#include "include/core/SkScalar.h"
 #include "modules/skparagraph/include/DartTypes.h"
 #include "modules/skparagraph/include/TextShadow.h"
 
@@ -25,7 +26,7 @@ enum TextDecoration {
     kOverline = 0x2,
     kLineThrough = 0x4,
 };
-constexpr std::initializer_list<TextDecoration> AllTextDecorations = {
+constexpr TextDecoration AllTextDecorations[] = {
         kNoDecoration,
         kUnderline,
         kOverline,
@@ -36,7 +37,6 @@ enum TextDecorationStyle { kSolid, kDouble, kDotted, kDashed, kWavy };
 
 enum StyleType {
     kAllAttributes,
-    kText,
     kFont,
     kForeground,
     kBackground,
@@ -46,9 +46,81 @@ enum StyleType {
     kWordSpacing
 };
 
+struct Decoration {
+    TextDecoration fType;
+    SkColor fColor;
+    TextDecorationStyle fStyle;
+    SkScalar fThicknessMultiplier;
+
+    bool operator==(const Decoration& other) const {
+        return this->fType == other.fType &&
+               this->fColor == other.fColor &&
+               this->fStyle == other.fStyle &&
+               this->fThicknessMultiplier == other.fThicknessMultiplier;
+    }
+};
+
+/// Where to vertically align the placeholder relative to the surrounding text.
+enum class PlaceholderAlignment {
+  /// Match the baseline of the placeholder with the baseline.
+  kBaseline,
+
+  /// Align the bottom edge of the placeholder with the baseline such that the
+  /// placeholder sits on top of the baseline.
+  kAboveBaseline,
+
+  /// Align the top edge of the placeholder with the baseline specified in
+  /// such that the placeholder hangs below the baseline.
+  kBelowBaseline,
+
+  /// Align the top edge of the placeholder with the top edge of the font.
+  /// When the placeholder is very tall, the extra space will hang from
+  /// the top and extend through the bottom of the line.
+  kTop,
+
+  /// Align the bottom edge of the placeholder with the top edge of the font.
+  /// When the placeholder is very tall, the extra space will rise from
+  /// the bottom and extend through the top of the line.
+  kBottom,
+
+  /// Align the middle of the placeholder with the middle of the text. When the
+  /// placeholder is very tall, the extra space will grow equally from
+  /// the top and bottom of the line.
+  kMiddle,
+};
+
+struct PlaceholderStyle {
+    PlaceholderStyle() { }
+    PlaceholderStyle(SkScalar width, SkScalar height, PlaceholderAlignment alignment,
+                     TextBaseline baseline, SkScalar offset)
+            : fWidth(width)
+            , fHeight(height)
+            , fAlignment(alignment)
+            , fBaseline(baseline)
+            , fBaselineOffset(offset) {}
+
+    SkScalar fWidth = 0;
+    SkScalar fHeight = 0;
+
+    PlaceholderAlignment fAlignment;
+
+    TextBaseline fBaseline;
+
+    // Distance from the top edge of the rect to the baseline position. This
+    // baseline will be aligned against the alphabetic baseline of the surrounding
+    // text.
+    //
+    // Positive values drop the baseline lower (positions the rect higher) and
+    // small or negative values will cause the rect to be positioned underneath
+    // the line. When baseline == height, the bottom edge of the rect will rest on
+    // the alphabetic baseline.
+    SkScalar fBaselineOffset = 0;
+};
+
 class TextStyle {
 public:
     TextStyle();
+    TextStyle(const TextStyle& other, bool placeholder);
     ~TextStyle() = default;
 
     bool equals(const TextStyle& other) const;
@@ -76,16 +148,17 @@ public:
     void clearBackgroundColor() { fHasBackground = false; }
 
     // Decorations
-    TextDecoration getDecoration() const { return fDecoration; }
-    SkColor getDecorationColor() const { return fDecorationColor; }
-    TextDecorationStyle getDecorationStyle() const { return fDecorationStyle; }
+    Decoration getDecoration() const { return fDecoration; }
+    TextDecoration getDecorationType() const { return fDecoration.fType; }
+    SkColor getDecorationColor() const { return fDecoration.fColor; }
+    TextDecorationStyle getDecorationStyle() const { return fDecoration.fStyle; }
     SkScalar getDecorationThicknessMultiplier() const {
-        return fDecorationThicknessMultiplier;
+        return fDecoration.fThicknessMultiplier;
     }
-    void setDecoration(TextDecoration decoration) { fDecoration = decoration; }
-    void setDecorationStyle(TextDecorationStyle style) { fDecorationStyle = style; }
-    void setDecorationColor(SkColor color) { fDecorationColor = color; }
-    void setDecorationThicknessMultiplier(SkScalar m) { fDecorationThicknessMultiplier = m; }
+    void setDecoration(TextDecoration decoration) { fDecoration.fType = decoration; }
+    void setDecorationStyle(TextDecorationStyle style) { fDecoration.fStyle = style; }
+    void setDecorationColor(SkColor color) { fDecoration.fColor = color; }
+    void setDecorationThicknessMultiplier(SkScalar m) { fDecoration.fThicknessMultiplier = m; }
 
     // Weight/Width/Slant
     SkFontStyle getFontStyle() const { return fFontStyle; }
@@ -106,7 +179,10 @@ public:
     }
 
     void setHeight(SkScalar height) { fHeight = height; }
-    SkScalar getHeight() const { return fHeight; }
+    SkScalar getHeight() const { return fHeightOverride ? fHeight : 0; }
+
+    void setHeightOverride(bool heightOverride) { fHeightOverride = heightOverride; }
+    bool getHeightOverride() const { return fHeightOverride; }
 
     void setLetterSpacing(SkScalar letterSpacing) { fLetterSpacing = letterSpacing; }
     SkScalar getLetterSpacing() const { return fLetterSpacing; }
@@ -124,28 +200,21 @@ public:
     TextBaseline getTextBaseline() const { return fTextBaseline; }
     void setTextBaseline(TextBaseline baseline) { fTextBaseline = baseline; }
 
-    // TODO: Not to use SkFontMetrics class (it has different purpose and meaning)
-    void getFontMetrics(SkFontMetrics* metrics) const {
-        SkFont font(fTypeface, fFontSize);
-        font.getMetrics(metrics);
-        metrics->fAscent =
-                (metrics->fAscent - metrics->fLeading / 2) * (fHeight == 0 ? 1 : fHeight);
-        metrics->fDescent =
-                (metrics->fDescent + metrics->fLeading / 2) * (fHeight == 0 ? 1 : fHeight);
-    }
+    void getFontMetrics(SkFontMetrics* metrics) const;
+
+    bool isPlaceholder() const { return fIsPlaceholder; }
+    void setPlaceholder() { fIsPlaceholder = true; }
 
 private:
-    TextDecoration fDecoration;
-    SkColor fDecorationColor;
-    TextDecorationStyle fDecorationStyle;
-    SkScalar fDecorationThicknessMultiplier;
+
+    Decoration fDecoration;
 
     SkFontStyle fFontStyle;
 
     std::vector<SkString> fFontFamilies;
     SkScalar fFontSize;
-
     SkScalar fHeight;
+    bool fHeightOverride;
     SkString fLocale;
     SkScalar fLetterSpacing;
     SkScalar fWordSpacing;
@@ -161,7 +230,61 @@ private:
     std::vector<TextShadow> fTextShadows;
 
     sk_sp<SkTypeface> fTypeface;
+    bool fIsPlaceholder;
 };
+
+typedef size_t TextIndex;
+typedef SkRange<size_t> TextRange;
+const SkRange<size_t> EMPTY_TEXT = EMPTY_RANGE;
+
+
+struct Block {
+    Block() : fRange(EMPTY_RANGE), fStyle() { }
+    Block(size_t start, size_t end, const TextStyle& style) : fRange(start, end), fStyle(style) {}
+    Block(TextRange textRange, const TextStyle& style) : fRange(textRange), fStyle(style) {}
+
+    Block(const Block& other) {
+        fRange = other.fRange;
+        fStyle = other.fStyle;
+    }
+
+    void add(TextRange tail) {
+        SkASSERT(fRange.end == tail.start);
+        fRange = TextRange(fRange.start, fRange.start + fRange.width() + tail.width());
+    }
+    TextRange fRange;
+    TextStyle fStyle;
+};
+
+
+typedef size_t BlockIndex;
+typedef SkRange<size_t> BlockRange;
+const size_t EMPTY_BLOCK = EMPTY_INDEX;
+const SkRange<size_t> EMPTY_BLOCKS = EMPTY_RANGE;
+
+struct Placeholder {
+    Placeholder() : fRange(EMPTY_RANGE), fStyle() {}
+
+    Placeholder(size_t start, size_t end, const PlaceholderStyle& style, BlockRange blocksBefore,
+                TextRange textBefore)
+            : fRange(start, end)
+            , fStyle(style)
+            , fBlocksBefore(blocksBefore)
+            , fTextBefore(textBefore) {}
+
+    Placeholder(const Placeholder& other) {
+        fRange = other.fRange;
+        fStyle = other.fStyle;
+        fBlocksBefore = other.fBlocksBefore;
+        fTextBefore = other.fTextBefore;
+    }
+
+    TextRange fRange;
+    PlaceholderStyle fStyle;
+    BlockRange fBlocksBefore;
+    TextRange fTextBefore;
+};
+
 }  // namespace textlayout
 }  // namespace skia
 

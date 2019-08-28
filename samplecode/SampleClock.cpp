@@ -18,10 +18,6 @@
 #define USE_PATH 1
 
 class ClockView : public Sample {
-public:
-    ClockView() {}
-
-protected:
     SkString name() override { return SkString("Clock"); }
 
     void onDrawContent(SkCanvas* canvas) override {
@@ -210,13 +206,7 @@ protected:
         canvas->restore();
     }
 
-    bool onAnimate(const AnimTimer&) override { return true; }
-
-private:
-
-    typedef Sample INHERITED;
+    bool onAnimate(double /*nanos*/) override { return true; }
 };
-
-//////////////////////////////////////////////////////////////////////////////
 
 DEF_SAMPLE( return new ClockView(); )

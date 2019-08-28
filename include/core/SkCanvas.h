@@ -578,7 +578,8 @@ public:
         kInitWithPrevious_SaveLayerFlag = 1 << 2, //!< initializes with previous contents
         kMaskAgainstCoverage_EXPERIMENTAL_DONT_USE_SaveLayerFlag =
                                           1 << 3, //!< experimental: do not use
-
+        // instead of matching previous layer's colortype, use F16
+        kF16ColorType                   = 1 << 4,
 #ifdef SK_SUPPORT_LEGACY_CLIPTOLAYERFLAG
         kDontClipToLayer_Legacy_SaveLayerFlag =
            kDontClipToLayer_PrivateSaveLayerFlag, //!< deprecated
@@ -1858,7 +1859,12 @@ public:
      * This API only draws solid color, filled rectangles so it does not accept a full SkPaint.
      */
     void experimental_DrawEdgeAAQuad(const SkRect& rect, const SkPoint clip[4], QuadAAFlags aaFlags,
-                                     SkColor color, SkBlendMode mode);
+                                     const SkColor4f& color, SkBlendMode mode);
+    void experimental_DrawEdgeAAQuad(const SkRect& rect, const SkPoint clip[4], QuadAAFlags aaFlags,
+                                     SkColor color, SkBlendMode mode) {
+        this->experimental_DrawEdgeAAQuad(rect, clip, aaFlags, SkColor4f::FromColor(color), mode);
+    }
+
     /**
      * This is an bulk variant of experimental_DrawEdgeAAQuad() that renders 'cnt' textured quads.
      * For each entry, 'fDstRect' is rendered with its clip (determined by entry's 'fHasClip' and
@@ -2202,6 +2208,8 @@ public:
         Optional cullRect is a conservative bounds of all transformed sprites.
         If cullRect is outside of clip, canvas can skip drawing.
 
+        If atlas is nullptr, this draws nothing.
+
         @param atlas     SkImage containing sprites
         @param xform     SkRSXform mappings for sprites in atlas
         @param tex       SkRect locations of sprites in atlas
@@ -2475,7 +2483,11 @@ protected:
                                const SkPaint* paint);
 
     virtual void onDrawEdgeAAQuad(const SkRect& rect, const SkPoint clip[4], QuadAAFlags aaFlags,
-                                  SkColor color, SkBlendMode mode);
+                                  const SkColor4f& color, SkBlendMode mode);
+    // DEPRECATED: This is around until Flutter can be updated to use the const SkColor4f& variant.
+    // Subclasses that extend the SkColor4f function should not extend this.
+    virtual void onDrawEdgeAAQuad(const SkRect&, const SkPoint[4], QuadAAFlags,
+                                  SkColor, SkBlendMode) {}
     virtual void onDrawEdgeAAImageSet(const ImageSetEntry imageSet[], int count,
                                       const SkPoint dstClips[], const SkMatrix preViewMatrices[],
                                       const SkPaint* paint, SrcRectConstraint constraint);
@@ -2600,7 +2612,7 @@ private:
     friend class SkAndroidFrameworkUtils;
     friend class SkCanvasPriv;      // needs kDontClipToLayer_PrivateSaveLayerFlag
     friend class SkDrawIter;        // needs setupDrawForLayerDevice()
-    friend class AutoDrawLooper;
+    friend class AutoLayerForImageFilter;
     friend class DebugCanvas;       // needs experimental fAllowSimplifyClip
     friend class SkSurface_Raster;  // needs getDevice()
     friend class SkNoDrawCanvas;    // needs resetForNextPicture()

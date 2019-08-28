@@ -29,8 +29,12 @@ T ParseEnum(const TArray& arr, const skjson::Value& jenum,
         return arr[idx - 1];
     }
 
-    abuilder->log(Logger::Level::kWarning, nullptr,
-                  "Ignoring unknown range selector %s '%d'", warn_name, idx);
+    // For animators without selectors, BM emits dummy selector entries with 0 (inval) props.
+    // Supress warnings for these as they are "normal".
+    if (idx != 0) {
+        abuilder->log(Logger::Level::kWarning, nullptr,
+                      "Ignoring unknown range selector %s '%d'", warn_name, idx);
+    }
 
     static_assert(SK_ARRAY_COUNT(arr) > 0, "");
     return arr[0];
@@ -173,10 +177,25 @@ float Lerp(float a, float b, float t) { return a + (b - a) * t; }
 } // namespace
 
 sk_sp<RangeSelector> RangeSelector::Make(const skjson::ObjectValue* jrange,
-                                         const AnimationBuilder* abuilder,
-                                         AnimatorScope *ascope) {
+                                         const AnimationBuilder* abuilder) {
     if (!jrange) {
         return nullptr;
+    }
+
+    enum : int32_t {
+             kRange_SelectorType = 0,
+        kExpression_SelectorType = 1,
+
+        // kWiggly_SelectorType = ? (not exported)
+    };
+
+    {
+        const auto type = ParseDefault<int>((*jrange)["t"], kRange_SelectorType);
+        if (type != kRange_SelectorType) {
+            abuilder->log(Logger::Level::kWarning, nullptr,
+                          "Ignoring unsupported selector type '%d'", type);
+            return nullptr;
+        }
     }
 
     static constexpr Units gUnitMap[] = {
@@ -210,19 +229,19 @@ sk_sp<RangeSelector> RangeSelector::Make(const skjson::ObjectValue* jrange,
                               ParseEnum<Mode>  (gModeMap  , (*jrange)["m" ], abuilder, "mode"  ),
                               ParseEnum<Shape> (gShapeMap , (*jrange)["sh"], abuilder, "shape" )));
 
-    abuilder->bindProperty<ScalarValue>((*jrange)["s"], ascope,
+    abuilder->bindProperty<ScalarValue>((*jrange)["s"],
         [selector](const ScalarValue& s) {
             selector->fStart = s;
         });
-    abuilder->bindProperty<ScalarValue>((*jrange)["e"], ascope,
+    abuilder->bindProperty<ScalarValue>((*jrange)["e"],
         [selector](const ScalarValue& e) {
             selector->fEnd = e;
         });
-    abuilder->bindProperty<ScalarValue>((*jrange)["o"], ascope,
+    abuilder->bindProperty<ScalarValue>((*jrange)["o"],
         [selector](const ScalarValue& o) {
             selector->fOffset = o;
         });
-    abuilder->bindProperty<ScalarValue>((*jrange)["a"], ascope,
+    abuilder->bindProperty<ScalarValue>((*jrange)["a"],
         [selector](const ScalarValue& a) {
             selector->fAmount = a;
         });

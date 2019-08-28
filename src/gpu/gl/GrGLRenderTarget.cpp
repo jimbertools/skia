@@ -20,46 +20,52 @@
 // Because this class is virtually derived from GrSurface we must explicitly call its constructor.
 // Constructor for wrapped render targets.
 GrGLRenderTarget::GrGLRenderTarget(GrGLGpu* gpu,
-                                   const GrSurfaceDesc& desc,
-                                   GrGLenum format,
-                                   const IDDesc& idDesc,
+                                   const SkISize& size,
+                                   GrGLFormat format,
+                                   GrPixelConfig config,
+                                   int sampleCount,
+                                   const IDs& ids,
                                    GrGLStencilAttachment* stencil)
-    : GrSurface(gpu, desc)
-    , INHERITED(gpu, desc, stencil) {
-    this->setFlags(gpu->glCaps(), idDesc);
-    this->init(desc, format, idDesc);
+        : GrSurface(gpu, size, config, GrProtected::kNo)
+        , INHERITED(gpu, size, config, sampleCount, GrProtected::kNo, stencil) {
+    this->setFlags(gpu->glCaps(), ids);
+    this->init(format, ids);
     this->registerWithCacheWrapped(GrWrapCacheable::kNo);
 }
 
-GrGLRenderTarget::GrGLRenderTarget(GrGLGpu* gpu, const GrSurfaceDesc& desc, GrGLenum format,
-                                   const IDDesc& idDesc)
-    : GrSurface(gpu, desc)
-    , INHERITED(gpu, desc) {
-    this->setFlags(gpu->glCaps(), idDesc);
-    this->init(desc, format, idDesc);
+GrGLRenderTarget::GrGLRenderTarget(GrGLGpu* gpu,
+                                   const SkISize& size,
+                                   GrGLFormat format,
+                                   GrPixelConfig config,
+                                   int sampleCount,
+                                   const IDs& ids)
+        : GrSurface(gpu, size, config, GrProtected::kNo)
+        , INHERITED(gpu, size, config, sampleCount, GrProtected::kNo) {
+    this->setFlags(gpu->glCaps(), ids);
+    this->init(format, ids);
 }
 
-inline void GrGLRenderTarget::setFlags(const GrGLCaps& glCaps, const IDDesc& idDesc) {
+inline void GrGLRenderTarget::setFlags(const GrGLCaps& glCaps, const IDs& idDesc) {
     if (!idDesc.fRTFBOID) {
         this->setGLRTFBOIDIs0();
     }
 }
 
-void GrGLRenderTarget::init(const GrSurfaceDesc& desc, GrGLenum format, const IDDesc& idDesc) {
-    fRTFBOID                = idDesc.fRTFBOID;
-    fTexFBOID               = idDesc.fTexFBOID;
-    fMSColorRenderbufferID  = idDesc.fMSColorRenderbufferID;
-    fRTFBOOwnership         = idDesc.fRTFBOOwnership;
-
-    fRTFormat               = format;
-
+void GrGLRenderTarget::init(GrGLFormat format, const IDs& idDesc) {
+     fRTFBOID                = idDesc.fRTFBOID;
+     fTexFBOID               = idDesc.fTexFBOID;
+     fMSColorRenderbufferID  = idDesc.fMSColorRenderbufferID;
+     fRTFBOOwnership         = idDesc.fRTFBOOwnership;
+     fRTFormat               = format;
     fNumSamplesOwnedPerPixel = this->totalSamples();
 }
 
 sk_sp<GrGLRenderTarget> GrGLRenderTarget::MakeWrapped(GrGLGpu* gpu,
-                                                      const GrSurfaceDesc& desc,
-                                                      GrGLenum format,
-                                                      const IDDesc& idDesc,
+                                                      const SkISize& size,
+                                                      GrGLFormat format,
+                                                      GrPixelConfig config,
+                                                      int sampleCount,
+                                                      const IDs& idDesc,
                                                       int stencilBits) {
     GrGLStencilAttachment* sb = nullptr;
     if (stencilBits) {
@@ -70,16 +76,17 @@ sk_sp<GrGLRenderTarget> GrGLRenderTarget::MakeWrapped(GrGLGpu* gpu,
         format.fStencilBits = stencilBits;
         format.fTotalBits = stencilBits;
         // Ownership of sb is passed to the GrRenderTarget so doesn't need to be deleted
-        sb = new GrGLStencilAttachment(gpu, sbDesc, desc.fWidth, desc.fHeight,
-                                       desc.fSampleCnt, format);
+        sb = new GrGLStencilAttachment(gpu, sbDesc, size.width(), size.height(), sampleCount,
+                                       format);
     }
-    return sk_sp<GrGLRenderTarget>(new GrGLRenderTarget(gpu, desc, format, idDesc, sb));
+    return sk_sp<GrGLRenderTarget>(
+            new GrGLRenderTarget(gpu, size, format, config, sampleCount, idDesc, sb));
 }
 
 GrBackendRenderTarget GrGLRenderTarget::getBackendRenderTarget() const {
     GrGLFramebufferInfo fbi;
     fbi.fFBOID = fRTFBOID;
-    fbi.fFormat = this->getGLGpu()->glCaps().configSizedInternalFormat(this->config());
+    fbi.fFormat = GrGLFormatToEnum(this->format());
     int numStencilBits = 0;
     if (GrStencilAttachment* stencil = this->renderTargetPriv().getStencilAttachment()) {
         numStencilBits = stencil->bits();
@@ -92,7 +99,7 @@ GrBackendRenderTarget GrGLRenderTarget::getBackendRenderTarget() const {
 GrBackendFormat GrGLRenderTarget::backendFormat() const {
     // We should never have a GrGLRenderTarget (even a textureable one with a target that is not
     // texture 2D.
-    return GrBackendFormat::MakeGL(fRTFormat, GR_GL_TEXTURE_2D);
+    return GrBackendFormat::MakeGL(GrGLFormatToEnum(fRTFormat), GR_GL_TEXTURE_2D);
 }
 
 size_t GrGLRenderTarget::onGpuMemorySize() const {

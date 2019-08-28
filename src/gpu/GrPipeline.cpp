@@ -11,7 +11,6 @@
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrRenderTargetContext.h"
-#include "src/gpu/GrRenderTargetOpList.h"
 #include "src/gpu/GrXferProcessor.h"
 
 #include "src/gpu/ops/GrOp.h"
@@ -42,7 +41,7 @@ GrPipeline::GrPipeline(const InitArgs& args,
     if (args.fDstProxy.proxy()) {
         SkASSERT(args.fDstProxy.proxy()->isInstantiated());
 
-        fDstTextureProxy.reset(args.fDstProxy.proxy());
+        fDstTextureProxy = args.fDstProxy.refProxy();
         fDstTextureOffset = args.fDstProxy.offset();
     }
 
@@ -74,34 +73,20 @@ GrPipeline::GrPipeline(const InitArgs& args,
 #endif
 }
 
-void GrPipeline::addDependenciesTo(GrOpList* opList, const GrCaps& caps) const {
-    for (int i = 0; i < fFragmentProcessors.count(); ++i) {
-        GrFragmentProcessor::TextureAccessIter iter(fFragmentProcessors[i].get());
-        while (const GrFragmentProcessor::TextureSampler* sampler = iter.next()) {
-            opList->addDependency(sampler->proxy(), caps);
-        }
-    }
-
-    if (fDstTextureProxy) {
-        opList->addDependency(fDstTextureProxy.get(), caps);
-    }
-
-}
-
 GrXferBarrierType GrPipeline::xferBarrierType(GrTexture* texture, const GrCaps& caps) const {
-    if (fDstTextureProxy.get() && fDstTextureProxy.get()->peekTexture() == texture) {
+    if (fDstTextureProxy && fDstTextureProxy->peekTexture() == texture) {
         return kTexture_GrXferBarrierType;
     }
     return this->getXferProcessor().xferBarrierType(caps);
 }
 
-GrPipeline::GrPipeline(GrScissorTest scissorTest, SkBlendMode blendmode,
+GrPipeline::GrPipeline(GrScissorTest scissorTest, sk_sp<const GrXferProcessor> xp,
                        const GrSwizzle& outputSwizzle, InputFlags inputFlags,
                        const GrUserStencilSettings* userStencil)
         : fWindowRectsState()
         , fUserStencilSettings(userStencil)
         , fFlags((Flags)inputFlags)
-        , fXferProcessor(GrPorterDuffXPFactory::MakeNoCoverageXP(blendmode))
+        , fXferProcessor(std::move(xp))
         , fFragmentProcessors()
         , fNumColorProcessors(0)
         , fOutputSwizzle(outputSwizzle) {
@@ -114,8 +99,7 @@ GrPipeline::GrPipeline(GrScissorTest scissorTest, SkBlendMode blendmode,
 }
 
 uint32_t GrPipeline::getBlendInfoKey() const {
-    GrXferProcessor::BlendInfo blendInfo;
-    this->getXferProcessor().getBlendInfo(&blendInfo);
+    const GrXferProcessor::BlendInfo& blendInfo = this->getXferProcessor().getBlendInfo();
 
     static const uint32_t kBlendWriteShift = 1;
     static const uint32_t kBlendCoeffShift = 5;

@@ -30,15 +30,11 @@ sk_sp<GrVkSecondaryCBDrawContext> GrVkSecondaryCBDrawContext::Make(GrContext* ct
         return nullptr;
     }
 
-    sk_sp<GrRenderTargetContext> rtc(
-            ctx->priv().makeVulkanSecondaryCBRenderTargetContext(imageInfo, vkInfo, props));
+    auto rtc = ctx->priv().makeVulkanSecondaryCBRenderTargetContext(imageInfo, vkInfo, props);
     SkASSERT(rtc->asSurfaceProxy()->isInstantiated());
 
-    int width = rtc->width();
-    int height = rtc->height();
-
-    sk_sp<SkGpuDevice> device(SkGpuDevice::Make(ctx, std::move(rtc), width, height,
-                                                SkGpuDevice::kUninit_InitContents));
+    sk_sp<SkGpuDevice> device(
+            SkGpuDevice::Make(ctx, std::move(rtc), SkGpuDevice::kUninit_InitContents));
     if (!device) {
         return nullptr;
     }
@@ -105,6 +101,7 @@ bool GrVkSecondaryCBDrawContext::characterize(SkSurfaceCharacterization* charact
                           SkSurfaceCharacterization::MipMapped(false),
                           SkSurfaceCharacterization::UsesGLFBO0(false),
                           SkSurfaceCharacterization::VulkanSecondaryCBCompatible(true),
+                          GrProtected(rtc->asRenderTargetProxy()->isProtected()),
                           this->props());
 
     return true;
@@ -145,6 +142,7 @@ bool GrVkSecondaryCBDrawContext::isCompatible(
     }
 
     GrBackendFormat rtcFormat = rtc->asRenderTargetProxy()->backendFormat();
+    GrProtected isProtected = GrProtected(rtc->asRenderTargetProxy()->isProtected());
 
     return characterization.contextInfo() && characterization.contextInfo()->priv().matches(ctx) &&
            characterization.cacheMaxResourceBytes() <= maxResourceBytes &&
@@ -156,6 +154,7 @@ bool GrVkSecondaryCBDrawContext::isCompatible(
            characterization.sampleCount() == rtc->numSamples() &&
            SkColorSpace::Equals(characterization.colorSpace(),
                                 rtc->colorSpaceInfo().colorSpace()) &&
+           characterization.isProtected() == isProtected &&
            characterization.surfaceProps() == rtc->surfaceProps();
 }
 
@@ -167,7 +166,7 @@ bool GrVkSecondaryCBDrawContext::draw(SkDeferredDisplayList* ddl) {
     GrRenderTargetContext* rtc = fDevice->accessRenderTargetContext();
     GrContext* ctx = fDevice->context();
 
-    ctx->priv().copyOpListsFromDDL(ddl, rtc->asRenderTargetProxy());
+    ctx->priv().copyRenderTasksFromDDL(ddl, rtc->asRenderTargetProxy());
     return true;
 }
 

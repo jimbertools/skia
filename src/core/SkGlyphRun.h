@@ -158,7 +158,6 @@ private:
             SkSpan<const char> text = SkSpan<const char>{},
             SkSpan<const uint32_t> clusters = SkSpan<const uint32_t>{});
     void simplifyTextBlobIgnoringRSXForm(
-            const SkPaint& paint,
             const SkTextBlobRunIterator& it,
             SkPoint* positions);
 
@@ -171,9 +170,6 @@ private:
     // Used as a temporary for preparing using utfN text. This implies that only one run of
     // glyph ids will ever be needed because blobs are already glyph based.
     std::vector<SkGlyphID> fScratchGlyphIDs;
-
-    // Used as temporary storage for calculating positions for drawText.
-    std::vector<SkPoint> fScratchAdvances;
 
     // Used for collecting the set of unique glyphs.
     SkGlyphIDSet fGlyphIDSet;

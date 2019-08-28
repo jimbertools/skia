@@ -11,6 +11,8 @@
 #ifndef GrGLTypesPriv_DEFINED
 #define GrGLTypesPriv_DEFINED
 
+static constexpr int kGrGLFormatCount = static_cast<int>(GrGLFormat::kLast) + 1;
+
 class GrGLTextureParameters : public SkNVRefCnt<GrGLTextureParameters> {
 public:
     // We currently consider texture parameters invalid on all textures

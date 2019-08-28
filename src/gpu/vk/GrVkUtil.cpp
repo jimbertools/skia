@@ -12,144 +12,38 @@
 #include "src/gpu/vk/GrVkGpu.h"
 #include "src/sksl/SkSLCompiler.h"
 
-bool GrPixelConfigToVkFormat(GrPixelConfig config, VkFormat* format) {
-    VkFormat dontCare;
-    if (!format) {
-        format = &dontCare;
-    }
-
-    switch (config) {
-        case kUnknown_GrPixelConfig:
-            return false;
-        case kRGBA_8888_GrPixelConfig:
-            *format = VK_FORMAT_R8G8B8A8_UNORM;
-            return true;
-        case kRGB_888_GrPixelConfig:
-            *format = VK_FORMAT_R8G8B8_UNORM;
-            return true;
-        case kRGB_888X_GrPixelConfig:
-            *format = VK_FORMAT_R8G8B8A8_UNORM;
-            return true;
-        case kRG_88_GrPixelConfig:
-            *format = VK_FORMAT_R8G8_UNORM;
-            return true;
-        case kBGRA_8888_GrPixelConfig:
-            *format = VK_FORMAT_B8G8R8A8_UNORM;
-            return true;
-        case kSRGBA_8888_GrPixelConfig:
-            *format = VK_FORMAT_R8G8B8A8_SRGB;
-            return true;
-        case kRGBA_1010102_GrPixelConfig:
-            *format = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
-            return true;
-        case kRGB_565_GrPixelConfig:
-            *format = VK_FORMAT_R5G6B5_UNORM_PACK16;
-            return true;
-        case kRGBA_4444_GrPixelConfig:
-            // R4G4B4A4 is not required to be supported so we actually
-            // store the data is if it was B4G4R4A4 and swizzle in shaders
-            *format = VK_FORMAT_B4G4R4A4_UNORM_PACK16;
-            return true;
-        case kAlpha_8_GrPixelConfig: // fall through
-        case kAlpha_8_as_Red_GrPixelConfig:
-            *format = VK_FORMAT_R8_UNORM;
-            return true;
-        case kAlpha_8_as_Alpha_GrPixelConfig:
-            return false;
-        case kGray_8_GrPixelConfig:
-        case kGray_8_as_Red_GrPixelConfig:
-            *format = VK_FORMAT_R8_UNORM;
-            return true;
-        case kGray_8_as_Lum_GrPixelConfig:
-            return false;
-        case kRGBA_float_GrPixelConfig:
-            *format = VK_FORMAT_R32G32B32A32_SFLOAT;
-            return true;
-        case kRG_float_GrPixelConfig:
-            *format = VK_FORMAT_R32G32_SFLOAT;
-            return true;
-        case kRGBA_half_GrPixelConfig:
-        case kRGBA_half_Clamped_GrPixelConfig:
-            *format = VK_FORMAT_R16G16B16A16_SFLOAT;
-            return true;
-        case kRGB_ETC1_GrPixelConfig:
-            // converting to ETC2 which is a superset of ETC1
-            *format = VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK;
-            return true;
-        case kAlpha_half_GrPixelConfig: // fall through
-        case kAlpha_half_as_Red_GrPixelConfig:
-            *format = VK_FORMAT_R16_SFLOAT;
-            return true;
-        case kR_16_GrPixelConfig:
-            *format = VK_FORMAT_R16_UNORM;
-            return true;
-        case kRG_1616_GrPixelConfig:
-            *format = VK_FORMAT_R16G16_UNORM;
-            return true;
-        // Experimental (for Y416 and mutant P016/P010)
-        case kRGBA_16161616_GrPixelConfig:
-            *format = VK_FORMAT_R16G16B16A16_UNORM;
-            return true;
-        case kRG_half_GrPixelConfig:
-            *format = VK_FORMAT_R16G16_SFLOAT;
-            return true;
-
-    }
-    SK_ABORT("Unexpected config");
-    return false;
-}
-
 #ifdef SK_DEBUG
-bool GrVkFormatPixelConfigPairIsValid(VkFormat format, GrPixelConfig config) {
+bool GrVkFormatColorTypePairIsValid(VkFormat format, GrColorType colorType) {
     switch (format) {
-        case VK_FORMAT_R8G8B8A8_UNORM:
-            return kRGBA_8888_GrPixelConfig == config ||
-                   kRGB_888X_GrPixelConfig == config;
-        case VK_FORMAT_B8G8R8A8_UNORM:
-            return kBGRA_8888_GrPixelConfig == config;
-        case VK_FORMAT_R8G8B8A8_SRGB:
-            return kSRGBA_8888_GrPixelConfig == config;
-        case VK_FORMAT_R8G8B8_UNORM:
-            return kRGB_888_GrPixelConfig == config;
-        case VK_FORMAT_R8G8_UNORM:
-            return kRG_88_GrPixelConfig == config;
-        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
-            return kRGBA_1010102_GrPixelConfig == config;
-        case VK_FORMAT_R5G6B5_UNORM_PACK16:
-            return kRGB_565_GrPixelConfig == config;
-        case VK_FORMAT_B4G4R4A4_UNORM_PACK16:
-            // R4G4B4A4 is not required to be supported so we actually
-            // store RGBA_4444 data as B4G4R4A4.
-            return kRGBA_4444_GrPixelConfig == config;
-        case VK_FORMAT_R8_UNORM:
-            return kAlpha_8_GrPixelConfig == config ||
-                   kAlpha_8_as_Red_GrPixelConfig == config ||
-                   kGray_8_GrPixelConfig == config ||
-                   kGray_8_as_Red_GrPixelConfig == config;
-        case VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:
-            return kRGB_ETC1_GrPixelConfig == config;
-        case VK_FORMAT_R32G32B32A32_SFLOAT:
-            return kRGBA_float_GrPixelConfig == config;
-        case VK_FORMAT_R32G32_SFLOAT:
-            return kRG_float_GrPixelConfig == config;
-        case VK_FORMAT_R16G16B16A16_SFLOAT:
-            return kRGBA_half_GrPixelConfig == config ||
-                   kRGBA_half_Clamped_GrPixelConfig == config;
-        case VK_FORMAT_R16_SFLOAT:
-            return kAlpha_half_GrPixelConfig == config ||
-                   kAlpha_half_as_Red_GrPixelConfig == config;
-        case VK_FORMAT_R16_UNORM:
-            return kR_16_GrPixelConfig == config;
-        case VK_FORMAT_R16G16_UNORM:
-            return kRG_1616_GrPixelConfig == config;
+        case VK_FORMAT_R8G8B8A8_UNORM:            return GrColorType::kRGBA_8888 == colorType ||
+                                                         GrColorType::kRGB_888x == colorType;
+        case VK_FORMAT_B8G8R8A8_UNORM:            return GrColorType::kBGRA_8888 == colorType;
+        case VK_FORMAT_R8G8B8A8_SRGB:             return GrColorType::kRGBA_8888_SRGB == colorType;
+        case VK_FORMAT_R8G8B8_UNORM:              return GrColorType::kRGB_888x == colorType;
+        case VK_FORMAT_R8G8_UNORM:                return GrColorType::kRG_88 == colorType;
+        case VK_FORMAT_A2B10G10R10_UNORM_PACK32:  return GrColorType::kRGBA_1010102 == colorType;
+        case VK_FORMAT_R5G6B5_UNORM_PACK16:       return GrColorType::kBGR_565 == colorType;
+        // R4G4B4A4 is not required to be supported so we actually
+        // store RGBA_4444 data as B4G4R4A4.
+        case VK_FORMAT_B4G4R4A4_UNORM_PACK16:     return GrColorType::kABGR_4444 == colorType;
+        case VK_FORMAT_R4G4B4A4_UNORM_PACK16:     return GrColorType::kABGR_4444 == colorType;
+        case VK_FORMAT_R8_UNORM:                 return GrColorType::kAlpha_8 == colorType ||
+                                                         GrColorType::kGray_8 == colorType;
+        case VK_FORMAT_R32G32B32A32_SFLOAT:       return GrColorType::kRGBA_F32 == colorType;
+        case VK_FORMAT_R16G16B16A16_SFLOAT:       return GrColorType::kRGBA_F16 == colorType ||
+                                                         GrColorType::kRGBA_F16_Clamped == colorType;
+        case VK_FORMAT_R16_SFLOAT:                return GrColorType::kAlpha_F16 == colorType;
+        case VK_FORMAT_R16_UNORM:                 return GrColorType::kR_16 == colorType;
+        case VK_FORMAT_R16G16_UNORM:              return GrColorType::kRG_1616 == colorType;
+        case VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM: return GrColorType::kRGB_888x == colorType;
+        case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM:  return GrColorType::kRGB_888x == colorType;
         // Experimental (for Y416 and mutant P016/P010)
-        case VK_FORMAT_R16G16B16A16_UNORM:
-            return kRGBA_16161616_GrPixelConfig == config;
-        case VK_FORMAT_R16G16_SFLOAT:
-            return kRG_half_GrPixelConfig == config;
-        default:
-            return false;
+        case VK_FORMAT_R16G16B16A16_UNORM:        return GrColorType::kRGBA_16161616 == colorType;
+        case VK_FORMAT_R16G16_SFLOAT:             return GrColorType::kRG_F16 == colorType;
+        default:                                  return false;
     }
+
+    SkUNREACHABLE;
 }
 #endif
 
@@ -158,7 +52,6 @@ bool GrVkFormatIsSupported(VkFormat format) {
         case VK_FORMAT_R8G8B8A8_UNORM:
         case VK_FORMAT_B8G8R8A8_UNORM:
         case VK_FORMAT_R8G8B8A8_SRGB:
-        case VK_FORMAT_B8G8R8A8_SRGB:
         case VK_FORMAT_R8G8B8_UNORM:
         case VK_FORMAT_R8G8_UNORM:
         case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
@@ -168,11 +61,12 @@ bool GrVkFormatIsSupported(VkFormat format) {
         case VK_FORMAT_R8_UNORM:
         case VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:
         case VK_FORMAT_R32G32B32A32_SFLOAT:
-        case VK_FORMAT_R32G32_SFLOAT:
         case VK_FORMAT_R16G16B16A16_SFLOAT:
         case VK_FORMAT_R16_SFLOAT:
         case VK_FORMAT_R16_UNORM:
         case VK_FORMAT_R16G16_UNORM:
+        case VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM:
+        case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM:
         // Experimental (for Y416 and mutant P016/P010)
         case VK_FORMAT_R16G16B16A16_UNORM:
         case VK_FORMAT_R16G16_SFLOAT:
@@ -180,6 +74,11 @@ bool GrVkFormatIsSupported(VkFormat format) {
         default:
             return false;
     }
+}
+
+bool GrVkFormatNeedsYcbcrSampler(VkFormat format) {
+    return format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM ||
+           format == VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM;
 }
 
 bool GrSampleCountToVkSampleCount(uint32_t samples, VkSampleCountFlagBits* vkSamples) {
@@ -300,13 +199,11 @@ size_t GrVkBytesPerFormat(VkFormat vkFormat) {
         case VK_FORMAT_R8G8B8A8_UNORM:
         case VK_FORMAT_R8G8B8A8_SRGB:
         case VK_FORMAT_B8G8R8A8_UNORM:
-        case VK_FORMAT_B8G8R8A8_SRGB:
         case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
         case VK_FORMAT_R16G16_UNORM:
             return 4;
 
         case VK_FORMAT_R16G16B16A16_SFLOAT:
-        case VK_FORMAT_R32G32_SFLOAT:
             return 8;
 
         case VK_FORMAT_R32G32B32A32_SFLOAT:
@@ -323,11 +220,9 @@ size_t GrVkBytesPerFormat(VkFormat vkFormat) {
 
         default:
             SK_ABORT("Invalid Vk format");
-            return 0;
     }
 
     SK_ABORT("Invalid Vk format");
-    return 0;
 }
 
 bool GrVkFormatIsCompressed(VkFormat vkFormat) {

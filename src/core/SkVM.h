@@ -10,8 +10,8 @@
 
 #include "include/core/SkTypes.h"
 #include "include/private/SkTHash.h"
-#include "include/private/SkSpinlock.h"
-#include <vector>
+#include <functional>  // std::hash
+#include <vector>      // std::vector
 
 namespace skvm {
 
@@ -49,15 +49,12 @@ namespace skvm {
             v24, v25, v26, v27, v28, v29, v30, v31,
         };
 
-        void byte(const void*, int);
+        void bytes(const void*, int);
         void byte(uint8_t);
-        template <typename... Rest> void byte(uint8_t, Rest...);
-
         void word(uint32_t);
 
         // x86-64
 
-        void nop();
         void align(int mod);
 
         void vzeroupper();
@@ -73,7 +70,8 @@ namespace skvm {
                           vpsubw, vpmullw,
                   vaddps, vsubps, vmulps, vdivps,
                   vfmadd132ps, vfmadd213ps, vfmadd231ps,
-                  vpackusdw, vpackuswb;
+                  vpackusdw, vpackuswb,
+                  vpcmpeqd, vpcmpgtd;
 
         using DstEqXOpImm = void(Ymm dst, Ymm x, int imm);
         DstEqXOpImm vpslld, vpsrld, vpsrad,
@@ -81,21 +79,52 @@ namespace skvm {
                     vpermq;
 
         using DstEqOpX = void(Ymm dst, Ymm x);
-        DstEqOpX vcvtdq2ps, vcvttps2dq;
+        DstEqOpX vmovdqa, vcvtdq2ps, vcvttps2dq;
 
-        struct Label { int offset; };
+        void vpblendvb(Ymm dst, Ymm x, Ymm y, Ymm z);
+
+        struct Label {
+            int                                 offset = 0;
+            enum { None, ARMDisp19, X86Disp32 } kind = None;
+            std::vector<int>                    references;
+        };
+
         Label here();
+        void label(Label*);
 
-        void jne(Label);
+        void jmp(Label*);
+        void je (Label*);
+        void jne(Label*);
+        void jl (Label*);
+        void cmp(GP64, int imm);
 
-        void vbroadcastss(Ymm dst, Label);
-        void vpshufb(Ymm dst, Ymm x, Label);
+        void vbroadcastss(Ymm dst, Label*);
+        void vbroadcastss(Ymm dst, Xmm src);
+        void vbroadcastss(Ymm dst, GP64 ptr, int off);  // dst = *(ptr+off)
 
-        void vmovups  (Ymm dst, GP64 src);
-        void vpmovzxbd(Ymm dst, GP64 src);
+        void vpshufb(Ymm dst, Ymm x, Label*);
 
-        void vmovups(GP64 dst, Ymm src);
-        void vmovq  (GP64 dst, Xmm src);
+        void vmovups  (Ymm dst, GP64 ptr);   // dst = *ptr, 256-bit
+        void vpmovzxwd(Ymm dst, GP64 ptr);   // dst = *ptr, 128-bit, each uint16_t expanded to int
+        void vpmovzxbd(Ymm dst, GP64 ptr);   // dst = *ptr,  64-bit, each uint8_t  expanded to int
+        void vmovd    (Xmm dst, GP64 ptr);   // dst = *ptr,  32-bit
+
+        void vmovups(GP64 ptr, Ymm src);     // *ptr = src, 256-bit
+        void vmovups(GP64 ptr, Xmm src);     // *ptr = src, 128-bit
+        void vmovq  (GP64 ptr, Xmm src);     // *ptr = src,  64-bit
+        void vmovd  (GP64 ptr, Xmm src);     // *ptr = src,  32-bit
+
+        void movzbl(GP64 dst, GP64 ptr, int off);  // dst = *(ptr+off), uint8_t -> int
+        void movb  (GP64 ptr, GP64 src);           // *ptr = src, 8-bit
+
+        void vmovd_direct(GP64 dst, Xmm src);  // dst = src, 32-bit
+        void vmovd_direct(Xmm dst, GP64 src);  // dst = src, 32-bit
+
+        void vpinsrw(Xmm dst, Xmm src, GP64 ptr, int imm);  // dst = src; dst[imm] = *ptr, 16-bit
+        void vpinsrb(Xmm dst, Xmm src, GP64 ptr, int imm);  // dst = src; dst[imm] = *ptr,  8-bit
+
+        void vpextrw(GP64 ptr, Xmm src, int imm);           // *dst = src[imm]           , 16-bit
+        void vpextrb(GP64 ptr, Xmm src, int imm);           // *dst = src[imm]           ,  8-bit
 
         // aarch64
 
@@ -112,7 +141,8 @@ namespace skvm {
 
         // d = op(n,imm)
         using DOpNImm = void(V d, V n, int imm);
-        DOpNImm shl4s, sshr4s, ushr4s,
+        DOpNImm sli4s,
+                shl4s, sshr4s, ushr4s,
                                ushr8h;
 
         // d = op(n)
@@ -128,14 +158,34 @@ namespace skvm {
 
         void ret (X);
         void add (X d, X n, int imm12);
-        void subs(X d, X n, int imm12);
-        void bne (Label);
+        void sub (X d, X n, int imm12);
+        void subs(X d, X n, int imm12);  // subtract setting condition flags
 
-        void ldrq(V dst, Label);  // 128-bit PC-relative load
+        // There's another encoding for unconditional branches that can jump further,
+        // but this one encoded as b.al is simple to implement and should be fine.
+        void b  (Label* l) { this->b(Condition::al, l); }
+        void bne(Label* l) { this->b(Condition::ne, l); }
+        void blt(Label* l) { this->b(Condition::lt, l); }
+
+        // "cmp ..." is just an assembler mnemonic for "subs xzr, ..."!
+        void cmp(X n, int imm12) { this->subs(xzr, n, imm12); }
+
+        // Compare and branch if zero/non-zero, as if
+        //      cmp(t,0)
+        //      beq/bne(l)
+        // but without setting condition flags.
+        void cbz (X t, Label* l);
+        void cbnz(X t, Label* l);
+
+        void ldrq(V dst, Label*);  // 128-bit PC-relative load
+
         void ldrq(V dst, X src);  // 128-bit dst = *src
-        void ldrs(V dst, X src);  //  32-bit dst[0] = *src
+        void ldrs(V dst, X src);  //  32-bit dst = *src
+        void ldrb(V dst, X src);  //   8-bit dst = *src
+
         void strq(V src, X dst);  // 128-bit *dst = src
-        void strs(V src, X dst);  //  32-bit *dst = src[0]
+        void strs(V src, X dst);  //  32-bit *dst = src
+        void strb(V src, X dst);  //   8-bit *dst = src
 
     private:
         // dst = op(dst, imm)
@@ -153,10 +203,7 @@ namespace skvm {
         void op(int prefix, int map, int opcode, int opcode_ext, Ymm dst, Ymm x, int imm);
 
         // dst = op(x,label) or op(label)
-        void op(int prefix, int map, int opcode, Ymm dst, Ymm x, Label l);
-        void op(int prefix, int map, int opcode, Ymm dst,        Label l) {
-            this->op(prefix, map, opcode, dst, (Ymm)0, l);
-        }
+        void op(int prefix, int map, int opcode, Ymm dst, Ymm x, Label* l);
 
         // *ptr = ymm or ymm = *ptr, depending on opcode.
         void load_store(int prefix, int map, int opcode, Ymm ymm, GP64 ptr);
@@ -170,79 +217,67 @@ namespace skvm {
         void op(uint32_t op22, V n, V d) { this->op(op22,0,n,d); }
         void op(uint32_t op22, X x, V v) { this->op(op22,0,(V)x,v); }
 
+        // Order matters... value is 4-bit encoding for condition code.
+        enum class Condition { eq,ne,cs,cc,mi,pl,vs,vc,hi,ls,ge,lt,gt,le,al };
+        void b(Condition, Label*);
+
+        void jump(uint8_t condition, Label*);
+
+        int disp19(Label*);
+        int disp32(Label*);
+
         uint8_t* fCode;
+        uint8_t* fCurr;
         size_t   fSize;
     };
 
     enum class Op : uint8_t {
-        store8, store32,
-        load8,  load32,
+          store8,   store16,   store32,
+    // ↑ side effects / no side effects ↓
+
+           load8,    load16,    load32,
+         gather8,  gather16,  gather32,
+    // ↑ always varying / uniforms, constants, Just Math ↓
+
+        uniform8, uniform16, uniform32,
         splat,
-        add_f32, sub_f32, mul_f32, div_f32, mad_f32,
-        add_i32, sub_i32, mul_i32,
-        sub_i16x2, mul_i16x2, shr_i16x2,
-        bit_and, bit_or, bit_xor, bit_clear,
-        shl, shr, sra,
-        extract,
-        pack,
-        bytes,
-        to_f32, to_i32,
-    };
 
-    using Reg = int;
+        add_f32, add_i32, add_i16x2,
+        sub_f32, sub_i32, sub_i16x2,
+        mul_f32, mul_i32, mul_i16x2,
+        div_f32,
+        mad_f32,
+                 shl_i32, shl_i16x2,
+                 shr_i32, shr_i16x2,
+                 sra_i32, sra_i16x2,
 
-    class Program {
-    public:
-        struct Instruction {   // d = op(x, y, z/imm)
-            Op  op;
-            Reg d,x,y;
-            union { Reg z; int imm; };
-        };
+         to_i32,  to_f32,
 
-        Program(std::vector<Instruction>, int regs, int loop);
-        Program() : Program({}, 0, 0) {}
+         eq_f32,  eq_i32,  eq_i16x2,
+        neq_f32, neq_i32, neq_i16x2,
+         lt_f32,  lt_i32,  lt_i16x2,
+        lte_f32, lte_i32, lte_i16x2,
+         gt_f32,  gt_i32,  gt_i16x2,
+        gte_f32, gte_i32, gte_i16x2,
 
-        ~Program();
-        Program(Program&&);
-        Program& operator=(Program&&);
-        Program(const Program&) = delete;
-        Program& operator=(const Program&) = delete;
+        bit_and,
+        bit_or,
+        bit_xor,
+        bit_clear,
+        select,
 
-        template <typename... T>
-        void eval(int n, T*... arg) const {
-            void* args[] = { (void*)arg..., nullptr };
-            size_t strides[] = { sizeof(*arg)... };
-            this->eval(n, args, strides, (int)sizeof...(arg));
-        }
-
-        std::vector<Instruction> instructions() const { return fInstructions; }
-        int nregs() const { return fRegs; }
-        int loop() const { return fLoop; }
-
-    private:
-        struct JIT {
-            ~JIT();
-
-            void*  buf      = nullptr;  // Raw mmap'd buffer.
-            size_t size     = 0;        // Size of buf in bytes.
-            void (*entry)() = nullptr;  // Entry point, offset into buf.
-            int    mask     = 0;        // Mask of N the JIT'd code can handle.
-        };
-
-        void eval(int n, void* args[], size_t strides[], int nargs) const;
-
-        std::vector<Instruction> fInstructions;
-        int                      fRegs;
-        int                      fLoop;
-        mutable SkSpinlock       fJITLock;
-        mutable JIT              fJIT;
+        bytes, extract, pack,
     };
 
     using Val = int;
+    // We reserve the last Val ID as a sentinel meaning none, n/a, null, nil, etc.
+    static const Val NA = ~0;
 
     struct Arg { int ix; };
     struct I32 { Val id; };
     struct F32 { Val id; };
+
+    class Program;
 
     class Builder {
     public:
@@ -250,47 +285,121 @@ namespace skvm {
             Op  op;         // v* = op(x,y,z,imm), where * == index of this Instruction.
             Val x,y,z;      // Enough arguments for mad().
             int imm;        // Immediate bit pattern, shift count, argument index, etc.
+
+            // Not populated until done() has been called.
+            int  death;     // Index of last live instruction taking this input; live if != 0.
+            bool hoist;     // Value independent of all loop variables?
         };
 
-        Program done() const;
+        Program done(const char* debug_name = nullptr);
 
-        Arg arg(int);
+        // Mostly for debugging, tests, etc.
+        std::vector<Instruction> program() const { return fProgram; }
 
+
+        // Declare an argument with given stride (use stride=0 for uniforms).
+        // TODO: different types for varying and uniforms?
+        Arg arg(int stride);
+
+        // Convenience arg() wrappers for most common strides, sizeof(T) and 0.
+        template <typename T>
+        Arg varying() { return this->arg(sizeof(T)); }
+        Arg uniform() { return this->arg(0); }
+
+        // TODO: allow uniform (i.e. Arg) offsets to store* and load*?
+        // TODO: sign extension (signed types) for <32-bit loads?
+        // TODO: unsigned integer operations where relevant (just comparisons?)?
+
+        // Store {8,16,32}-bit varying.
         void store8 (Arg ptr, I32 val);
+        void store16(Arg ptr, I32 val);
         void store32(Arg ptr, I32 val);
 
+        // Load u8,u16,i32 varying.
         I32 load8 (Arg ptr);
+        I32 load16(Arg ptr);
         I32 load32(Arg ptr);
 
+        // Gather u8,u16,i32 with varying element-count offset.
+        I32 gather8 (Arg ptr, I32 offset);
+        I32 gather16(Arg ptr, I32 offset);
+        I32 gather32(Arg ptr, I32 offset);
+
+        // Load u8,u16,i32 uniform with optional byte-count offset.
+        I32 uniform8 (Arg ptr, int offset=0);
+        I32 uniform16(Arg ptr, int offset=0);
+        I32 uniform32(Arg ptr, int offset=0);
+
+        // Load an immediate constant.
         I32 splat(int      n);
         I32 splat(unsigned u) { return this->splat((int)u); }
         F32 splat(float    f);
 
+        // float math, comparisons, etc.
         F32 add(F32 x, F32 y);
         F32 sub(F32 x, F32 y);
         F32 mul(F32 x, F32 y);
         F32 div(F32 x, F32 y);
-        F32 mad(F32 x, F32 y, F32 z);
+        F32 mad(F32 x, F32 y, F32 z);  //  x*y+z, often an FMA
 
+        I32 eq (F32 x, F32 y);
+        I32 neq(F32 x, F32 y);
+        I32 lt (F32 x, F32 y);
+        I32 lte(F32 x, F32 y);
+        I32 gt (F32 x, F32 y);
+        I32 gte(F32 x, F32 y);
+
+        I32 to_i32(F32 x);
+        I32 bit_cast(F32 x) { return {x.id}; }
+
+        // int math, comparisons, etc.
         I32 add(I32 x, I32 y);
         I32 sub(I32 x, I32 y);
         I32 mul(I32 x, I32 y);
-
-        I32 sub_16x2(I32 x, I32 y);
-        I32 mul_16x2(I32 x, I32 y);
-        I32 shr_16x2(I32 x, int bits);
-
-        I32 bit_and  (I32 x, I32 y);
-        I32 bit_or   (I32 x, I32 y);
-        I32 bit_xor  (I32 x, I32 y);
-        I32 bit_clear(I32 x, I32 y);   // x & ~y
 
         I32 shl(I32 x, int bits);
         I32 shr(I32 x, int bits);
         I32 sra(I32 x, int bits);
 
-        I32 extract(I32 x, int bits, I32 z);   // (x >> bits) & z
-        I32 pack   (I32 x, I32 y, int bits);   // x | (y << bits)
+        I32 eq (I32 x, I32 y);
+        I32 neq(I32 x, I32 y);
+        I32 lt (I32 x, I32 y);
+        I32 lte(I32 x, I32 y);
+        I32 gt (I32 x, I32 y);
+        I32 gte(I32 x, I32 y);
+
+        F32 to_f32(I32 x);
+        F32 bit_cast(I32 x) { return {x.id}; }
+
+        // Treat each 32-bit lane as a pair of 16-bit ints.
+        I32 add_16x2(I32 x, I32 y);
+        I32 sub_16x2(I32 x, I32 y);
+        I32 mul_16x2(I32 x, I32 y);
+
+        I32 shl_16x2(I32 x, int bits);
+        I32 shr_16x2(I32 x, int bits);
+        I32 sra_16x2(I32 x, int bits);
+
+        I32  eq_16x2(I32 x, I32 y);
+        I32 neq_16x2(I32 x, I32 y);
+        I32  lt_16x2(I32 x, I32 y);
+        I32 lte_16x2(I32 x, I32 y);
+        I32  gt_16x2(I32 x, I32 y);
+        I32 gte_16x2(I32 x, I32 y);
+
+        // Bitwise operations.
+        I32 bit_and  (I32 x, I32 y);
+        I32 bit_or   (I32 x, I32 y);
+        I32 bit_xor  (I32 x, I32 y);
+        I32 bit_clear(I32 x, I32 y);   // x & ~y
+
+        I32 select(I32 cond, I32 t, I32 f);  // cond ? t : f
+        F32 select(I32 cond, F32 t, F32 f) {
+            return this->bit_cast(this->select(cond, this->bit_cast(t)
+                                                   , this->bit_cast(f)));
+        }
+
+        // More complex operations...
 
         // Shuffle the bytes in x according to each nibble of control, as if
         //
@@ -311,29 +420,26 @@ namespace skvm {
         //    - bytes(x, 0x4321) is x, an identity
         //    - bytes(x, 0x0000) is 0
         //    - bytes(x, 0x0404) transforms an RGBA pixel into an A0A0 bit pattern.
-        //
-        I32 bytes(I32 x, int control);
+        I32 bytes  (I32 x, int control);
 
-        F32 to_f32(I32 x);
-        I32 to_i32(F32 x);
-
-        std::vector<Instruction> program() const { return fProgram; }
+        I32 extract(I32 x, int bits, I32 y);   // (x >> bits) & y
+        I32 pack   (I32 x, I32 y, int bits);   // x | (y << bits), assuming (x & (y << bits)) == 0
 
     private:
-        // We reserve the last Val ID as a sentinel meaning none, n/a, null, nil, etc.
-        static const Val NA = ~0;
-
         struct InstructionHash {
             template <typename T>
             static size_t Hash(T val) {
                 return std::hash<T>{}(val);
             }
+            // TODO: replace with SkOpts::hash()?
             size_t operator()(const Instruction& inst) const {
                 return Hash((uint8_t)inst.op)
                      ^ Hash(inst.x)
                      ^ Hash(inst.y)
                      ^ Hash(inst.z)
-                     ^ Hash(inst.imm);
+                     ^ Hash(inst.imm)
+                     ^ Hash(inst.death)
+                     ^ Hash(inst.hoist);
             }
         };
 
@@ -342,19 +448,72 @@ namespace skvm {
 
         SkTHashMap<Instruction, Val, InstructionHash> fIndex;
         std::vector<Instruction>                      fProgram;
+        std::vector<int>                              fStrides;
     };
 
-    // TODO: comparison operations, if_then_else
-    // TODO: learn how to do control flow
-    // TODO: gather, load_uniform
-    // TODO: 16- and 64-bit loads and stores
-    // TODO: 16- and 64-bit values?
-    // TODO: x86-64 SSE2 / SSE4.1 / AVX2 / AVX-512F JIT
-    // TODO: ARMv8 JIT
-    // TODO: ARMv8.2+FP16 JIT
-    // TODO: ARMv7 NEON JIT?
-    // TODO: lower to LLVM?
-    // TODO: lower to WebASM?
+    using Reg = int;
+
+    class Program {
+    public:
+        struct Instruction {   // d = op(x, y, z/imm)
+            Op  op;
+            Reg d,x,y;
+            union { Reg z; int imm; };
+        };
+
+        Program(const std::vector<Builder::Instruction>& instructions,
+                const std::vector<int>                 & strides,
+                const char* debug_name);
+
+        Program();
+        ~Program();
+        Program(Program&&);
+        Program& operator=(Program&&);
+        Program(const Program&) = delete;
+        Program& operator=(const Program&) = delete;
+
+        void eval(int n, void* args[]) const;
+
+        template <typename... T>
+        void eval(int n, T*... arg) const {
+            SkASSERT(sizeof...(arg) == fStrides.size());
+            // This nullptr isn't important except that it makes args[] non-empty if you pass none.
+            void* args[] = { (void*)arg..., nullptr };
+            this->eval(n, args);
+        }
+
+        std::vector<Instruction> instructions() const { return fInstructions; }
+        int nregs() const { return fRegs; }
+        int loop() const { return fLoop; }
+        bool empty() const { return fInstructions.empty(); }
+
+        // If this Program has been JITted, drop it, forcing interpreter fallback.
+        void dropJIT();
+
+    private:
+        void setupInterpreter(const std::vector<Builder::Instruction>&);
+        void setupJIT        (const std::vector<Builder::Instruction>&, const char* debug_name);
+
+        bool jit(const std::vector<Builder::Instruction>&,
+                 bool hoist,
+                 Assembler*) const;
+
+        // Dump jit-*.dump files for perf inject.
+        void dumpJIT(const char* debug_name, size_t size) const;
+
+        std::vector<Instruction> fInstructions;
+        int                      fRegs = 0;
+        int                      fLoop = 0;
+        std::vector<int>         fStrides;
+
+        void*  fJITBuf  = nullptr;
+        size_t fJITSize = 0;
+    };
+
+    // TODO: control flow
+    // TODO: 64-bit values?
+    // TODO: SSE2/SSE4.1, AVX-512F, ARMv8.2 JITs?
+    // TODO: lower to LLVM or WebASM for comparison?
 }
 
 #endif//SkVM_DEFINED

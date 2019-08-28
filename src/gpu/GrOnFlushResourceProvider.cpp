@@ -15,10 +15,8 @@
 #include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/GrSurfaceProxy.h"
 
-sk_sp<GrRenderTargetContext> GrOnFlushResourceProvider::makeRenderTargetContext(
-        sk_sp<GrSurfaceProxy> proxy,
-        GrColorType colorType,
-        sk_sp<SkColorSpace> colorSpace,
+std::unique_ptr<GrRenderTargetContext> GrOnFlushResourceProvider::makeRenderTargetContext(
+        sk_sp<GrSurfaceProxy> proxy, GrColorType colorType, sk_sp<SkColorSpace> colorSpace,
         const SkSurfaceProps* props) {
     // Since this is at flush time and these won't be allocated for us by the GrResourceAllocator
     // we have to manually ensure it is allocated here. The proxy had best have been created
@@ -27,14 +25,17 @@ sk_sp<GrRenderTargetContext> GrOnFlushResourceProvider::makeRenderTargetContext(
         return nullptr;
     }
 
-    sk_sp<GrRenderTargetContext> renderTargetContext(fDrawingMgr->makeRenderTargetContext(
-            std::move(proxy), colorType, std::move(colorSpace), props, false));
+    auto renderTargetContext = fDrawingMgr->makeRenderTargetContext(
+            std::move(proxy), colorType, std::move(colorSpace), props, false);
 
     if (!renderTargetContext) {
         return nullptr;
     }
 
     renderTargetContext->discard();
+
+    // FIXME: http://skbug.com/9357: This breaks if the renderTargetContext splits its opsTask.
+    fDrawingMgr->fOnFlushRenderTasks.push_back(sk_ref_sp(renderTargetContext->getOpsTask()));
 
     return renderTargetContext;
 }
@@ -57,9 +58,9 @@ void GrOnFlushResourceProvider::processInvalidUniqueKey(const GrUniqueKey& key) 
 }
 
 sk_sp<GrTextureProxy> GrOnFlushResourceProvider::findOrCreateProxyByUniqueKey(
-        const GrUniqueKey& key, GrSurfaceOrigin origin) {
+        const GrUniqueKey& key, GrColorType colorType, GrSurfaceOrigin origin) {
     auto proxyProvider = fDrawingMgr->getContext()->priv().proxyProvider();
-    return proxyProvider->findOrCreateProxyByUniqueKey(key, origin);
+    return proxyProvider->findOrCreateProxyByUniqueKey(key, colorType, origin);
 }
 
 bool GrOnFlushResourceProvider::instatiateProxy(GrSurfaceProxy* proxy) {

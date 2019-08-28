@@ -45,7 +45,7 @@ public:
         kNone            = 0x0,
 
         /** If the caller intends to do direct reads/writes to/from the CPU then this flag must be
-         *  set when accessing resources during a GrOpList flush. This includes the execution of
+         *  set when accessing resources during a GrOpsTask flush. This includes the execution of
          *  GrOp objects. The reason is that these memory operations are done immediately and
          *  will occur out of order WRT the operations being flushed.
          *  Make this automatic: https://bug.skia.org/4156
@@ -71,27 +71,53 @@ public:
 
     /**
      * Finds a texture that approximately matches the descriptor. Will be at least as large in width
-     * and height as desc specifies. If desc specifies that the texture should be a render target
-     * then result will be a render target. Format and sample count will always match the request.
+     * and height as desc specifies. If renderable is kYes then the GrTexture will also be a
+     * GrRenderTarget. The texture's format and sample count will always match the request.
      * The contents of the texture are undefined.
      */
-    sk_sp<GrTexture> createApproxTexture(const GrSurfaceDesc&, Flags);
+    sk_sp<GrTexture> createApproxTexture(const GrSurfaceDesc& desc,
+                                         const GrBackendFormat& format,
+                                         GrRenderable renderable,
+                                         int renderTargetSampleCnt,
+                                         GrProtected isProtected,
+                                         Flags flags);
 
-    /** Create an exact fit texture with no initial data to upload.
-     */
-    sk_sp<GrTexture> createTexture(const GrSurfaceDesc&, SkBudgeted, Flags = Flags::kNone);
+    /** Create an exact fit texture with no initial data to upload. */
+    sk_sp<GrTexture> createTexture(const GrSurfaceDesc& desc,
+                                   const GrBackendFormat& format,
+                                   GrRenderable renderable,
+                                   int renderTargetSampleCnt,
+                                   SkBudgeted budgeted,
+                                   GrProtected isProtected,
+                                   Flags flags = Flags::kNone);
 
-    sk_sp<GrTexture> createTexture(const GrSurfaceDesc&, SkBudgeted, const GrMipLevel texels[],
+    sk_sp<GrTexture> createTexture(const GrSurfaceDesc& desc,
+                                   const GrBackendFormat& format,
+                                   GrRenderable renderable,
+                                   int renderTargetSampleCnt,
+                                   SkBudgeted budgeted,
+                                   GrProtected isProtected,
+                                   const GrMipLevel texels[],
                                    int mipLevelCount);
 
-    // Create a potentially loose fit texture with the provided data
-    sk_sp<GrTexture> createTexture(const GrSurfaceDesc&, SkBudgeted, SkBackingFit,
-                                   const GrMipLevel&, Flags);
+    /** Create a potentially loose fit texture with the provided data */
+    sk_sp<GrTexture> createTexture(const GrSurfaceDesc& desc,
+                                   const GrBackendFormat& format,
+                                   GrRenderable renderable,
+                                   int renderTargetSampleCnt,
+                                   SkBudgeted budgeted,
+                                   SkBackingFit fit,
+                                   GrProtected isProtected,
+                                   GrColorType srcColorType,
+                                   const GrMipLevel& mipLevel,
+                                   Flags flags);
 
-    // Creates a compressed texture. The GrGpu must support the SkImageImage::Compression type.
-    // This does not currently support MIP maps.
-    sk_sp<GrTexture> createCompressedTexture(int width, int height, SkImage::CompressionType,
-                                             SkBudgeted, SkData* data);
+    /**
+     * Creates a compressed texture. The GrGpu must support the SkImageImage::Compression type.
+     * This does not currently support MIP maps. It will not be renderable.
+     */
+    sk_sp<GrTexture> createCompressedTexture(int width, int height, const GrBackendFormat&,
+                                             SkImage::CompressionType, SkBudgeted, SkData* data);
 
     ///////////////////////////////////////////////////////////////////////////
     // Wrapped Backend Surfaces
@@ -107,7 +133,7 @@ public:
      *
      * @return GrTexture object or NULL on failure.
      */
-    sk_sp<GrTexture> wrapBackendTexture(const GrBackendTexture& tex, GrWrapOwnership,
+    sk_sp<GrTexture> wrapBackendTexture(const GrBackendTexture& tex, GrColorType, GrWrapOwnership,
                                         GrWrapCacheable, GrIOType);
 
     /**
@@ -117,6 +143,7 @@ public:
      */
     sk_sp<GrTexture> wrapRenderableBackendTexture(const GrBackendTexture& tex,
                                                   int sampleCnt,
+                                                  GrColorType,
                                                   GrWrapOwnership,
                                                   GrWrapCacheable);
 
@@ -129,7 +156,8 @@ public:
      *
      * @return GrRenderTarget object or NULL on failure.
      */
-    sk_sp<GrRenderTarget> wrapBackendRenderTarget(const GrBackendRenderTarget&);
+    sk_sp<GrRenderTarget> wrapBackendRenderTarget(const GrBackendRenderTarget&,
+                                                  GrColorType colorType);
 
     sk_sp<GrRenderTarget> wrapVulkanSecondaryCBAsRenderTarget(const SkImageInfo&,
                                                               const GrVkDrawableInfo&);
@@ -225,7 +253,8 @@ public:
       * @return GrRenderTarget object or NULL on failure.
       */
      sk_sp<GrRenderTarget> wrapBackendTextureAsRenderTarget(const GrBackendTexture&,
-                                                            int sampleCnt);
+                                                            int sampleCnt,
+                                                            GrColorType);
 
     /**
      * Assigns a unique key to a resource. If the key is associated with another resource that
@@ -253,6 +282,8 @@ public:
     const GrCaps* caps() const { return fCaps.get(); }
     bool overBudget() const { return fCache->overBudget(); }
 
+    static uint32_t MakeApprox(uint32_t value);
+
     inline GrResourceProviderPriv priv();
     inline const GrResourceProviderPriv priv() const;
 
@@ -261,13 +292,24 @@ private:
 
     // Attempts to find a resource in the cache that exactly matches the GrSurfaceDesc. Failing that
     // it returns null. If non-null, the resulting texture is always budgeted.
-    sk_sp<GrTexture> refScratchTexture(const GrSurfaceDesc&, Flags);
+    sk_sp<GrTexture> refScratchTexture(const GrSurfaceDesc& desc,
+                                       const GrBackendFormat& format,
+                                       GrRenderable renderable,
+                                       int renderTargetSampleCnt,
+                                       GrProtected isProtected,
+                                       Flags flags);
 
     /*
      * Try to find an existing scratch texture that exactly matches 'desc'. If successful
      * update the budgeting accordingly.
      */
-    sk_sp<GrTexture> getExactScratch(const GrSurfaceDesc&, SkBudgeted, Flags);
+    sk_sp<GrTexture> getExactScratch(const GrSurfaceDesc& desc,
+                                     const GrBackendFormat& format,
+                                     GrRenderable renderable,
+                                     int renderTargetSampleCnt,
+                                     SkBudgeted budgeted,
+                                     GrProtected isProtected,
+                                     Flags flags);
 
     GrResourceCache* cache() { return fCache; }
     const GrResourceCache* cache() const { return fCache; }

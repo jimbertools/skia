@@ -10,7 +10,6 @@
 #include "include/core/SkStream.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
-#include "include/effects/SkBlurDrawLooper.h"
 #include "samplecode/DecodeFile.h"
 #include "samplecode/Sample.h"
 #include "src/core/SkBlurMask.h"
@@ -44,9 +43,7 @@ public:
 protected:
     SkString name() override { return SkString("unpremul"); }
 
-    bool onQuery(Sample::Event* evt) override {
-        SkUnichar uni;
-        if (Sample::CharQ(*evt, &uni)) {
+    bool onChar(SkUnichar uni) override {
             char utf8[SkUTF::kMaxBytesInUTF8Sequence];
             size_t size = SkUTF::ToUTF8(uni, utf8);
             // Only consider events for single char keys
@@ -62,8 +59,7 @@ protected:
                         break;
                 }
             }
-        }
-        return this->INHERITED::onQuery(evt);
+            return false;
     }
 
     void onDrawBackground(SkCanvas* canvas) override {
@@ -76,10 +72,6 @@ protected:
 
         SkFont font;
         font.setSize(24);
-        auto looper(
-            SkBlurDrawLooper::Make(SK_ColorBLUE, SkBlurMask::ConvertRadiusToSigma(SkIntToScalar(2)),
-                                   0, 0));
-        paint.setLooper(looper);
         SkScalar height = font.getMetrics(nullptr);
         if (!fDecodeSucceeded) {
             SkString failure;

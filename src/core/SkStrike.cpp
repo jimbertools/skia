@@ -123,17 +123,6 @@ SkSpan<const SkGlyph*> SkStrike::internalPrepare(
     return {results, glyphIDs.size()};
 }
 
-SkSpan<SkPoint> SkStrike::getAdvances(SkSpan<const SkGlyphID> glyphIDs, SkPoint advances[]) {
-    auto cursor = advances;
-    SkAutoSTArray<50, const SkGlyph*> glyphStorage{SkTo<int>(glyphIDs.size())};
-    auto glyphs = this->internalPrepare(glyphIDs, kMetricsOnly, glyphStorage.get());
-    for (const SkGlyph* glyph : glyphs) {
-        *cursor++ = glyph->advanceVector();
-    }
-    return {advances, glyphIDs.size()};
-}
-
-
 const void* SkStrike::prepareImage(SkGlyph* glyph) {
     if (glyph->setImage(&fAlloc, fScalerContext.get())) {
         fMemoryUsed += glyph->imageSize();
@@ -200,10 +189,11 @@ SkStrike::prepareImages(SkSpan<const SkPackedGlyphID> glyphIDs, const SkGlyph* r
 // N.B. This glyphMetrics call culls all the glyphs which will not display based on a non-finite
 // position or that there are no mask pixels.
 SkSpan<const SkGlyphPos>
-SkStrike::prepareForDrawing(const SkPackedGlyphID packedGlyphIDs[], const SkPoint positions[],
-                            size_t n,
-                            int maxDimension, PreparationDetail detail, SkGlyphPos results[]) {
-
+SkStrike::prepareForDrawingRemoveEmpty(const SkPackedGlyphID packedGlyphIDs[],
+                                       const SkPoint positions[],
+                                       size_t n,
+                                       int maxDimension,
+                                       SkGlyphPos results[]) {
     size_t drawableGlyphCount = 0;
     for (size_t i = 0; i < n; i++) {
         SkPoint pos = positions[i];
@@ -212,10 +202,7 @@ SkStrike::prepareForDrawing(const SkPackedGlyphID packedGlyphIDs[], const SkPoin
             if (!glyphPtr->isEmpty()) {
                 results[drawableGlyphCount++] = {i, glyphPtr, pos};
                 if (glyphPtr->maxDimension() <= maxDimension) {
-                    // The glyph fits; ensure the image if needed.
-                    if (detail == SkStrikeInterface::kImageIfNeeded) {
-                        this->prepareImage(glyphPtr);
-                    }
+                    // The glyph fits. Prepare image later.
                 } else if (!glyphPtr->isColor()) {
                     // The out of atlas glyph is not color so we can draw it using paths.
                     this->preparePath(glyphPtr);

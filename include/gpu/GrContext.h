@@ -70,6 +70,11 @@ public:
     static sk_sp<GrContext> MakeMetal(void* device, void* queue);
 #endif
 
+#ifdef SK_DAWN
+    static sk_sp<GrContext> MakeDawn(const dawn::Device& device, const GrContextOptions& options);
+    static sk_sp<GrContext> MakeDawn(const dawn::Device& device);
+#endif
+
     static sk_sp<GrContext> MakeMock(const GrMockOptions*, const GrContextOptions&);
     static sk_sp<GrContext> MakeMock(const GrMockOptions*);
 
@@ -339,6 +344,17 @@ public:
     static size_t ComputeTextureSize(SkColorType type, int width, int height, GrMipMapped,
                                      bool useNextPow2 = false);
 
+    /*
+     * Retrieve the default GrBackendFormat for a given SkColorType and renderability.
+     * It is guaranteed that this backend format will be the one used by the following
+     * SkColorType and SkSurfaceCharacterization-based createBackendTexture methods.
+     *
+     * The caller should check that the returned format is valid.
+     */
+    GrBackendFormat defaultBackendFormat(SkColorType ct, GrRenderable renderable) const {
+        return INHERITED::defaultBackendFormat(ct, renderable);
+    }
+
    /*
     * The explicitly allocated backend texture API allows clients to use Skia to create backend
     * objects outside of Skia proper (i.e., Skia's caching system will not know about them.)
@@ -418,6 +434,11 @@ public:
                                           const SkColor4f& color);
 
     void deleteBackendTexture(GrBackendTexture);
+
+#ifdef SK_ENABLE_DUMP_GPU
+    /** Returns a string with detailed information about the context & GPU, in JSON format. */
+    SkString dump() const;
+#endif
 
 protected:
     GrContext(GrBackendApi, const GrContextOptions&, int32_t contextID = SK_InvalidGenID);

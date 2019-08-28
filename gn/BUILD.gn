@@ -63,12 +63,8 @@ config("default") {
       "NOMINMAX",
     ]
 
-    if (msvc == 2015) {
-      _include_dirs = [ "$win_vc/include" ]
-    } else {  # 2017
-      _include_dirs = [ "$win_vc/Tools/MSVC/$win_toolchain_version/include" ]
-    }
-    _include_dirs += [
+    _include_dirs = [
+      "$win_vc/Tools/MSVC/$win_toolchain_version/include",
       "$win_sdk/Include/$win_sdk_version/shared",
       "$win_sdk/Include/$win_sdk_version/ucrt",
       "$win_sdk/Include/$win_sdk_version/um",
@@ -89,17 +85,8 @@ config("default") {
     lib_dirs = [
       "$win_sdk/Lib/$win_sdk_version/ucrt/$target_cpu",
       "$win_sdk/Lib/$win_sdk_version/um/$target_cpu",
+      "$win_vc/Tools/MSVC/$win_toolchain_version/lib/$target_cpu",
     ]
-    if (msvc == 2015) {
-      if (target_cpu == "x86") {
-        lib_dirs += [ "$win_vc/lib" ]
-      } else {
-        lib_dirs += [ "$win_vc/lib/amd64" ]
-      }
-    } else {  # 2017
-      lib_dirs +=
-          [ "$win_vc/Tools/MSVC/$win_toolchain_version/lib/$target_cpu" ]
-    }
   } else {
     cflags += [
       "-fstrict-aliasing",
@@ -378,6 +365,7 @@ config("warnings") {
       "-Wno-c++98-compat",
       "-Wno-c++98-compat-pedantic",
       "-Wno-undefined-func-template",
+      "-Wno-return-std-move-in-c++11",
     ]
     cflags_objc += [
       "-Wno-direct-ivar-access",
@@ -470,15 +458,6 @@ config("optimize") {
 
 config("NDEBUG") {
   defines = [ "NDEBUG" ]
-}
-
-config("msvc_rtc") {
-  defines = [ "_ALLOW_RTCc_IN_STL" ]
-  cflags = [
-    "/RTCcsu",
-    "/guard:cf",
-  ]
-  ldflags = [ "/guard:cf" ]
 }
 
 config("executable") {

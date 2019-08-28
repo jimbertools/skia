@@ -17,58 +17,47 @@
 #include "src/core/SkColorFilterPriv.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkWriteBuffer.h"
+#include "src/shaders/SkRTShader.h"
 #include "tools/Resources.h"
 
 #include <stddef.h>
 
-extern sk_sp<SkShader> SkRuntimeShaderMaker(SkString sksl, sk_sp<SkData> inputs,
-                                            const SkMatrix* localMatrix, bool isOpaque);
-
 const char* gProg = R"(
-    layout(ctype=float) in uniform half4 gColor;
+    layout(ctype=SkRect) in uniform half4 gColor;
 
-    half4 main(in float x, in float y) {
-        return half4(half(x)*(1.0/255), half(y)*(1.0/255), gColor.b, 1);
+    void main(float x, float y, inout half4 color) {
+        color = half4(half(x)*(1.0/255), half(y)*(1.0/255), gColor.b, 1);
     }
 )";
 
-class RuntimeShader : public skiagm::GM {
-public:
-    RuntimeShader() {
-        fName.printf("runtime_shader");
-    }
+static sk_sp<SkShader> gShader;
 
-protected:
+class RuntimeShader : public skiagm::GM {
+    sk_sp<SkData> fData;
+
     bool runAsBench() const override { return true; }
 
-    SkString onShortName() override {
-        return fName;
-    }
+    SkString onShortName() override { return SkString("runtime_shader"); }
 
-    SkISize onISize() override {
-        return SkISize::Make(512, 256);
-    }
+    SkISize onISize() override { return {512, 256}; }
 
     void onOnceBeforeDraw() override {
-        SkMatrix localM;
-        localM.setRotate(90, 128, 128);
+        // use global to pass gl persistent cache test in dm
+        if (!gShader) {
+            SkMatrix localM;
+            localM.setRotate(90, 128, 128);
 
-        fData = SkData::MakeUninitialized(sizeof(SkColor4f));
-        SkColor4f* c = (SkColor4f*)fData->writable_data();
-        *c = {1, 1, 0, 1};
-        fShader = SkRuntimeShaderMaker(SkString(gProg), fData, &localM, true);
+            fData = SkData::MakeUninitialized(sizeof(SkColor4f));
+            SkColor4f* c = (SkColor4f*)fData->writable_data();
+            *c = {1, 0, 0, 1};
+            gShader = SkRuntimeShaderFactory(SkString(gProg), true).make(fData, &localM);
+        }
     }
 
     void onDraw(SkCanvas* canvas) override {
         SkPaint p;
-        p.setShader(fShader);
+        p.setShader(gShader);
         canvas->drawRect({0, 0, 256, 256}, p);
     }
-private:
-    SkString fName;
-    sk_sp<SkData> fData;
-    sk_sp<SkShader> fShader;
-
-    typedef skiagm::GM INHERITED;
 };
 DEF_GM(return new RuntimeShader;)

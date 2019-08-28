@@ -10,6 +10,7 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkImageFilter.h"
 #include "include/core/SkPaint.h"
+#include "modules/sksg/src/SkSGNodePriv.h"
 
 namespace sksg {
 
@@ -28,6 +29,11 @@ bool RenderNode::isVisible() const {
 }
 
 void RenderNode::setVisible(bool v) {
+    if (v == this->isVisible()) {
+        return;
+    }
+
+    this->invalidate();
     fNodeFlags = v ? (fNodeFlags & ~kInvisible_Flag)
                    : (fNodeFlags | kInvisible_Flag);
 }
@@ -198,6 +204,16 @@ CustomRenderNode::~CustomRenderNode() {
     for (const auto& child : fChildren) {
         this->unobserveInval(child);
     }
+}
+
+bool CustomRenderNode::hasChildrenInval() const {
+    for (const auto& child : fChildren) {
+        if (NodePriv::HasInval(child)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 } // namespace sksg

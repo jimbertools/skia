@@ -30,7 +30,7 @@ public:
 
     bool canUseMixedSamples(const GrCaps& caps) const {
         return caps.mixedSamplesSupport() && !this->glRTFBOIDIs0() &&
-               caps.internalMultisampleCount(this->config()) > 0 &&
+               caps.internalMultisampleCount(this->backendFormat()) > 0 &&
                this->canChangeStencilAttachment();
     }
 
@@ -76,8 +76,8 @@ protected:
 
     // Deferred version
     GrRenderTargetProxy(const GrCaps&, const GrBackendFormat&, const GrSurfaceDesc&,
-                        GrSurfaceOrigin, const GrSwizzle& textureSwizzle,
-                        const GrSwizzle& outputSwizzle, SkBackingFit, SkBudgeted,
+                        int sampleCount, GrSurfaceOrigin, const GrSwizzle& textureSwizzle,
+                        const GrSwizzle& outputSwizzle, SkBackingFit, SkBudgeted, GrProtected,
                         GrInternalSurfaceFlags);
 
     enum class WrapsVkSecondaryCB : bool { kNo = false, kYes = true };
@@ -93,10 +93,10 @@ protected:
     // The minimal knowledge version is used for CCPR where we are generating an atlas but we do not
     // know the final size until flush time.
     GrRenderTargetProxy(LazyInstantiateCallback&&, LazyInstantiationType lazyType,
-                        const GrBackendFormat&, const GrSurfaceDesc&, GrSurfaceOrigin,
-                        const GrSwizzle& textureSwizzle, const GrSwizzle& outputSwizzle,
-                        SkBackingFit, SkBudgeted, GrInternalSurfaceFlags,
-                        WrapsVkSecondaryCB wrapsVkSecondaryCB);
+                        const GrBackendFormat&, const GrSurfaceDesc&, int sampleCount,
+                        GrSurfaceOrigin, const GrSwizzle& textureSwizzle,
+                        const GrSwizzle& outputSwizzle, SkBackingFit, SkBudgeted, GrProtected,
+                        GrInternalSurfaceFlags, WrapsVkSecondaryCB wrapsVkSecondaryCB);
 
     // Wrapped version
     GrRenderTargetProxy(sk_sp<GrSurface>, GrSurfaceOrigin, const GrSwizzle& textureSwizzle,

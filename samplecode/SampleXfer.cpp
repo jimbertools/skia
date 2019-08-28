@@ -15,7 +15,6 @@
 #include "include/utils/SkRandom.h"
 #include "include/utils/SkTextUtils.h"
 #include "samplecode/Sample.h"
-#include "tools/timer/AnimTimer.h"
 
 const SkBlendMode gModes[] = {
     SkBlendMode::kSrcOver,
@@ -59,7 +58,7 @@ public:
     }
 
     bool hitTest(SkScalar x, SkScalar y) {
-        return fRect.intersects(x - 1, y - 1, x + 1, y + 1);
+        return fRect.intersects({x - 1, y - 1, x + 1, y + 1});
     }
 };
 
@@ -161,11 +160,11 @@ protected:
         canvas->restore();
     }
 
-    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, unsigned) override {
+    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, ModifierKey) override {
         // Check mode buttons first
         for (int i = 0; i < N_Modes; ++i) {
             if (fModeButtons[i].hitTest(x, y)) {
-                Click* click = new Click(this);
+                Click* click = new Click();
                 click->fMeta.setS32("mode", i);
                 return click;
             }
@@ -177,13 +176,13 @@ protected:
                 break;
             }
         }
-        return fSelected ? new Click(this) : nullptr;
+        return fSelected ? new Click() : nullptr;
     }
 
     bool onClick(Click* click) override {
         int32_t mode;
         if (click->fMeta.findS32("mode", &mode)) {
-            if (fSelected && Click::kUp_State == click->fState) {
+            if (fSelected && InputState::kUp == click->fState) {
                 fSelected->fMode = gModes[mode];
             }
         } else {

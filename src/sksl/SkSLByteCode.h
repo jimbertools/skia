@@ -32,6 +32,8 @@ enum class ByteCodeInstruction : uint16_t {
     // Followed by three bytes indicating: the number of argument slots, the number of return slots,
     // and the index of the external value to call
     kCallExternal,
+    // For dynamic array access: Followed by byte indicating length of array
+    kClampIndex,
     VECTOR(kCompareIEQ),
     VECTOR(kCompareINEQ),
     VECTOR_MATRIX(kCompareFEQ),
@@ -52,12 +54,12 @@ enum class ByteCodeInstruction : uint16_t {
     VECTOR(kConvertStoF),
     VECTOR(kConvertUtoF),
     VECTOR(kCos),
-    kCross,
     VECTOR_MATRIX(kDivideF),
     VECTOR(kDivideS),
     VECTOR(kDivideU),
     // Duplicates the top stack value
     VECTOR_MATRIX(kDup),
+    kInverse2x2, kInverse3x3, kInverse4x4,
     // kLoad/kLoadGlobal are followed by a byte indicating the local/global slot to load
     VECTOR(kLoad),
     VECTOR(kLoadGlobal),
@@ -77,7 +79,6 @@ enum class ByteCodeInstruction : uint16_t {
     kMatrixMultiply,
     VECTOR_MATRIX(kNegateF),
     VECTOR(kNegateI),
-    VECTOR(kMix),
     VECTOR_MATRIX(kMultiplyF),
     VECTOR(kMultiplyI),
     kNotB,
@@ -155,9 +156,9 @@ struct ByteCodeFunction {
     int fParameterCount;
 
     int fLocalCount = 0;
-    // TODO: Compute this value analytically. For now, just pick an arbitrary value that we probably
-    // won't overflow.
-    int fStackCount = 128;
+    int fStackCount = 0;
+    int fConditionCount = 0;
+    int fLoopCount = 0;
     int fReturnCount = 0;
     std::vector<uint8_t> fCode;
 
@@ -197,15 +198,13 @@ struct SK_API ByteCode {
      * The return value is stored in 'outReturn' (may be null, to discard the return value).
      * 'uniforms' are mapped to 'uniform' globals, in order.
      */
-    void run(const ByteCodeFunction*, float* args, float* outReturn, int N,
-             const float* uniforms, int uniformCount) const;
+    bool SKSL_WARN_UNUSED_RESULT run(const ByteCodeFunction*, float* args, float* outReturn, int N,
+                                     const float* uniforms, int uniformCount) const;
 
-    // For now, if outArgCount > 0, then we will memcpy VecWidth number of elements into
-    // each slot in outArgs. This may change in the future, as that may be more than is actually
-    // valid (depending on the N that was passed in.
-    void runStriped(const ByteCodeFunction*, float* args[], int nargs, int N,
-                    const float* uniforms, int uniformCount,
-                    float* outArgs[], int outArgCount) const;
+    bool SKSL_WARN_UNUSED_RESULT runStriped(const ByteCodeFunction*,
+                                            float* args[], int nargs, int N,
+                                            const float* uniforms, int uniformCount,
+                                            float* outArgs[], int outArgCount) const;
 };
 
 }

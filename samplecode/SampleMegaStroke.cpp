@@ -13,7 +13,7 @@
 class MegaStrokeView : public Sample {
 public:
     MegaStrokeView() {
-        fClip.set(0, 0, 950, 600);
+        fClip.setLTRB(0, 0, 950, 600);
         fAngle = 0;
         fPlusMinus = 0;
         SkRandom rand;
@@ -28,15 +28,9 @@ public:
 protected:
     SkString name() override { return SkString("MegaStroke"); }
 
-    bool onQuery(Sample::Event* evt) override {
-        SkUnichar uni;
-        if (Sample::CharQ(*evt, &uni)) {
-           fClip.set(0, 0, 950, 600);
-        }
-        if (evt->isType("SampleCode_Key_Event")) {
-           fClip.set(0, 0, 950, 600);
-        }
-        return this->INHERITED::onQuery(evt);
+    bool onChar(SkUnichar uni) override {
+        fClip.setLTRB(0, 0, 950, 600);
+        return true;
     }
 
     void onDrawBackground(SkCanvas* canvas) override {
@@ -72,10 +66,10 @@ protected:
     }
 
     void onSizeChange() override {
-        fClip.set(0, 0, 950, 600);
+        fClip.setWH(950, 600);
     }
 
-    bool onAnimate(const AnimTimer&) override { return true; }
+    bool onAnimate(double /*nanos*/) override { return true; }
 
 private:
     SkPath      fMegaPath;

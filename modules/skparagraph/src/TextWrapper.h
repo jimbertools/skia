@@ -16,17 +16,17 @@ class TextWrapper {
     public:
         ClusterPos() : fCluster(nullptr), fPos(0) {}
         ClusterPos(Cluster* cluster, size_t pos) : fCluster(cluster), fPos(pos) {}
-        Cluster* cluster() const { return fCluster; }
-        size_t position() const { return fPos; }
-        void move(bool up) {
-            fCluster += up ? 1 : -1;
-            fPos = up ? 0 : fCluster->endPos();
-        }
-        void setPosition(size_t pos) { fPos = pos; }
+        inline Cluster* cluster() const { return fCluster; }
+        inline size_t position() const { return fPos; }
+        inline void setPosition(size_t pos) { fPos = pos; }
         void clean() {
             fCluster = nullptr;
             fPos = 0;
         }
+        void move(bool up) {
+            fCluster += up ? 1 : -1;
+            fPos = up ? 0 : fCluster->endPos();
+}
 
     private:
         Cluster* fCluster;
@@ -34,9 +34,9 @@ class TextWrapper {
     };
     class TextStretch {
     public:
-        TextStretch() : fStart(), fEnd(), fWidth(0) {}
-        TextStretch(Cluster* s, Cluster* e)
-                : fStart(s, 0), fEnd(e, e->endPos()), fMetrics(), fWidth(0) {
+        TextStretch() : fStart(), fEnd(), fWidth(0), fWidthWithGhostSpaces(0) {}
+        TextStretch(Cluster* s, Cluster* e, bool forceStrut)
+                : fStart(s, 0), fEnd(e, e->endPos()), fMetrics(forceStrut), fWidth(0), fWidthWithGhostSpaces(0) {
             for (auto c = s; c <= e; ++c) {
                 if (c->run() != nullptr) {
                     fMetrics.add(c->run());
@@ -44,13 +44,14 @@ class TextWrapper {
             }
         }
 
-        SkScalar width() const { return fWidth; }
-        Cluster* startCluster() const { return fStart.cluster(); }
-        Cluster* endCluster() const { return fEnd.cluster(); }
-        Cluster* breakCluster() const { return fBreak.cluster(); }
-        LineMetrics& metrics() { return fMetrics; }
-        size_t startPos() const { return fStart.position(); }
-        size_t endPos() const { return fEnd.position(); }
+        inline SkScalar width() const { return fWidth; }
+        SkScalar withWithGhostSpaces() const { return fWidthWithGhostSpaces; }
+        inline Cluster* startCluster() const { return fStart.cluster(); }
+        inline Cluster* endCluster() const { return fEnd.cluster(); }
+        inline Cluster* breakCluster() const { return fBreak.cluster(); }
+        inline LineMetrics& metrics() { return fMetrics; }
+        inline size_t startPos() const { return fStart.position(); }
+        inline size_t endPos() const { return fEnd.position(); }
         bool endOfCluster() { return fEnd.position() == fEnd.cluster()->endPos(); }
         bool endOfWord() {
             return endOfCluster() &&
@@ -89,20 +90,15 @@ class TextWrapper {
             fWidth = 0;
         }
 
-        void nextPos() {
-            if (fEnd.position() == fEnd.cluster()->endPos()) {
-                fEnd.move(true);
-            } else {
-                fEnd.setPosition(fEnd.cluster()->endPos());
-            }
+        void saveBreak() {
+            fWidthWithGhostSpaces = fWidth;
+            fBreak = fEnd;
         }
 
-        void saveBreak() { fBreak = fEnd; }
-
-        void restoreBreak() { fEnd = fBreak; }
-
         void trim() {
-            fWidth -= (fEnd.cluster()->width() - fEnd.cluster()->trimmedWidth(fEnd.position()));
+            if (fEnd.cluster()->run()->placeholder() == nullptr) {
+                fWidth -= (fEnd.cluster()->width() - fEnd.cluster()->trimmedWidth(fEnd.position()));
+            }
         }
 
         void trim(Cluster* cluster) {
@@ -128,15 +124,17 @@ class TextWrapper {
         ClusterPos fBreak;
         LineMetrics fMetrics;
         SkScalar fWidth;
+        SkScalar fWidthWithGhostSpaces;
     };
 
 public:
     TextWrapper() { fLineNumber = 1; }
 
-    using AddLineToParagraph = std::function<void(SkSpan<const char> text,
-                                                  SkSpan<const char> textWithSpaces,
-                                                  Cluster* start,
-                                                  Cluster* end,
+    using AddLineToParagraph = std::function<void(TextRange text,
+                                                  TextRange textWithSpaces,
+                                                  ClusterRange clusters,
+                                                  ClusterRange clustersWithGhosts,
+                                                  SkScalar AddLineToParagraph,
                                                   size_t startClip,
                                                   size_t endClip,
                                                   SkVector offset,
@@ -147,9 +145,9 @@ public:
                             SkScalar maxWidth,
                             const AddLineToParagraph& addLine);
 
-    SkScalar height() const { return fHeight; }
-    SkScalar minIntrinsicWidth() const { return fMinIntrinsicWidth; }
-    SkScalar maxIntrinsicWidth() const { return fMaxIntrinsicWidth; }
+    inline SkScalar height() const { return fHeight; }
+    inline SkScalar minIntrinsicWidth() const { return fMinIntrinsicWidth; }
+    inline SkScalar maxIntrinsicWidth() const { return fMaxIntrinsicWidth; }
 
 private:
     TextStretch fWords;
@@ -176,8 +174,8 @@ private:
 
     void lookAhead(SkScalar maxWidth, Cluster* endOfClusters);
     void moveForward();
-    void trimEndSpaces();
-    void trimStartSpaces(Cluster* endOfClusters);
+    void trimEndSpaces(TextAlign align);
+    std::tuple<Cluster*, size_t, SkScalar> trimStartSpaces(Cluster* endOfClusters);
     SkScalar getClustersTrimmedWidth();
 };
 }  // namespace textlayout

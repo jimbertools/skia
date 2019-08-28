@@ -84,7 +84,6 @@
 #define DEBUGCANVAS_ATTRIBUTE_PATHEFFECT "pathEffect"
 #define DEBUGCANVAS_ATTRIBUTE_MASKFILTER "maskFilter"
 #define DEBUGCANVAS_ATTRIBUTE_XFERMODE "xfermode"
-#define DEBUGCANVAS_ATTRIBUTE_LOOPER "looper"
 #define DEBUGCANVAS_ATTRIBUTE_BACKDROP "backdrop"
 #define DEBUGCANVAS_ATTRIBUTE_COLORFILTER "colorfilter"
 #define DEBUGCANVAS_ATTRIBUTE_IMAGEFILTER "imagefilter"
@@ -948,7 +947,6 @@ void DrawCommand::MakeJsonPaint(SkJSONWriter&   writer,
     apply_paint_patheffect(paint, writer, urlDataManager);
     apply_paint_maskfilter(paint, writer, urlDataManager);
     apply_flattenable(DEBUGCANVAS_ATTRIBUTE_SHADER, paint.getShader(), writer, urlDataManager);
-    apply_flattenable(DEBUGCANVAS_ATTRIBUTE_LOOPER, paint.getLooper(), writer, urlDataManager);
     apply_flattenable(
             DEBUGCANVAS_ATTRIBUTE_IMAGEFILTER, paint.getImageFilter(), writer, urlDataManager);
     apply_flattenable(
@@ -1969,7 +1967,7 @@ void DrawShadowCommand::toJSON(SkJSONWriter& writer, UrlDataManager& urlDataMana
 DrawEdgeAAQuadCommand::DrawEdgeAAQuadCommand(const SkRect&         rect,
                                              const SkPoint         clip[],
                                              SkCanvas::QuadAAFlags aa,
-                                             SkColor               color,
+                                             const SkColor4f&      color,
                                              SkBlendMode           mode)
         : INHERITED(kDrawEdgeAAQuad_OpType)
         , fRect(rect)

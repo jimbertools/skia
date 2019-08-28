@@ -380,10 +380,9 @@ public:
         }
     }
 
-    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y,
-                                      unsigned) override;
+    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, ModifierKey) override;
     bool onClick(Sample::Click*) override;
-    bool onQuery(Sample::Event* evt) override;
+    bool onChar(SkUnichar) override;
     SkString name() override { return SkString("DegenerateQuad"); }
 
 private:
@@ -453,9 +452,8 @@ private:
 
 class DegenerateQuadSample::Click : public Sample::Click {
 public:
-    Click(Sample* target, const SkRect& clamp, int index)
-            : Sample::Click(target)
-            , fOuterRect(clamp)
+    Click(const SkRect& clamp, int index)
+            : fOuterRect(clamp)
             , fIndex(index) {}
 
     void doClick(SkPoint points[4]) {
@@ -473,21 +471,21 @@ private:
     int fIndex;
 
     void drag(SkPoint* point) {
-        SkIPoint delta = fICurr - fIPrev;
+        SkPoint delta = fCurr - fPrev;
         *point += SkPoint::Make(delta.x() / kViewScale, delta.y() / kViewScale);
         point->fX = SkMinScalar(fOuterRect.fRight, SkMaxScalar(point->fX, fOuterRect.fLeft));
         point->fY = SkMinScalar(fOuterRect.fBottom, SkMaxScalar(point->fY, fOuterRect.fTop));
     }
 };
 
-Sample::Click* DegenerateQuadSample::onFindClickHandler(SkScalar x, SkScalar y, unsigned) {
+Sample::Click* DegenerateQuadSample::onFindClickHandler(SkScalar x, SkScalar y, ModifierKey) {
     SkPoint inCTM = SkPoint::Make((x - kViewOffset) / kViewScale, (y - kViewOffset) / kViewScale);
     for (int i = 0; i < 4; ++i) {
         if ((fCorners[i] - inCTM).length() < 10.f / kViewScale) {
-            return new Click(this, fOuterRect, i);
+            return new Click(fOuterRect, i);
         }
     }
-    return new Click(this, fOuterRect, -1);
+    return new Click(fOuterRect, -1);
 }
 
 bool DegenerateQuadSample::onClick(Sample::Click* click) {
@@ -496,9 +494,7 @@ bool DegenerateQuadSample::onClick(Sample::Click* click) {
     return true;
 }
 
-bool DegenerateQuadSample::onQuery(Sample::Event* event) {
-    SkUnichar code;
-    if (Sample::CharQ(*event, &code)) {
+bool DegenerateQuadSample::onChar(SkUnichar code) {
         switch(code) {
             case '1':
                 fEdgeAA[0] = !fEdgeAA[0];
@@ -522,8 +518,7 @@ bool DegenerateQuadSample::onQuery(Sample::Event* event) {
                 fCoverageMode = CoverageMode::kGPUMesh;
                 return true;
         }
-    }
-    return this->INHERITED::onQuery(event);
+        return false;
 }
 
 DEF_SAMPLE(return new DegenerateQuadSample(SkRect::MakeWH(4.f, 4.f));)

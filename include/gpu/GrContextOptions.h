@@ -160,7 +160,7 @@ struct SK_API GrContextOptions {
      * Allow Ganesh to more aggressively reorder operations.
      * Eventually this will just be what is done and will not be optional.
      */
-    Enable fReduceOpListSplitting = Enable::kDefault;
+    Enable fReduceOpsTaskSplitting = Enable::kDefault;
 
     /**
      * Some ES3 contexts report the ES2 external image extension, but not the ES3 version.
@@ -233,6 +233,11 @@ struct SK_API GrContextOptions {
      * Similar to fDisallowGLSLBinaryCaching. If set to true, SkSL shader strings will be cached.
      */
     bool fCacheSKSL = false;
+
+    /**
+     * Enforces clearing of all textures when they're created.
+     */
+    bool fClearAllTextures = false;
 
     /**
      * Include or exclude specific GPU path renderers.

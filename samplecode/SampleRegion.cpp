@@ -61,7 +61,8 @@ static void drawFadingText(SkCanvas* canvas,
     SkFontMetrics fm;
 
     font.getMetrics(&fm);
-    bounds.set(x, y + fm.fTop, x + font.measureText(text, len, SkTextEncoding::kUTF8), y + fm.fBottom);
+    bounds.setLTRB(x, y + fm.fTop,
+                   x + font.measureText(text, len, SkTextEncoding::kUTF8), y + fm.fBottom);
 
     // may need to outset bounds a little, to account for hinting and/or
     // antialiasing
@@ -155,7 +156,7 @@ static void paint_rgn(SkCanvas* canvas, const SkRegion& rgn,
 class RegionView : public Sample {
 public:
     RegionView() {
-        fBase.set(100, 100, 150, 150);
+        fBase.setLTRB(100, 100, 150, 150);
         fRect = fBase;
         fRect.inset(5, 5);
         fRect.offset(25, 25);
@@ -326,14 +327,14 @@ protected:
     }
 
     virtual Sample::Click* onFindClickHandler(SkScalar x, SkScalar y,
-                                              unsigned modi) override {
+                                              ModifierKey modi) override {
         return fRect.contains(SkScalarRoundToInt(x),
-                              SkScalarRoundToInt(y)) ? new Click(this) : nullptr;
+                              SkScalarRoundToInt(y)) ? new Click() : nullptr;
     }
 
     bool onClick(Click* click) override {
-        fRect.offset(click->fICurr.fX - click->fIPrev.fX,
-                     click->fICurr.fY - click->fIPrev.fY);
+        fRect.offset(click->fCurr.fX - click->fPrev.fX,
+                     click->fCurr.fY - click->fPrev.fY);
         return true;
     }
 

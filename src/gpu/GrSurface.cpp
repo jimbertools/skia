@@ -6,32 +6,27 @@
  */
 
 #include "include/gpu/GrContext.h"
-#include "include/gpu/GrRenderTarget.h"
 #include "include/gpu/GrSurface.h"
 #include "include/gpu/GrTexture.h"
-#include "src/gpu/GrOpList.h"
+#include "src/gpu/GrRenderTarget.h"
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrSurfacePriv.h"
 
 #include "src/core/SkMathPriv.h"
 #include "src/gpu/SkGr.h"
 
-size_t GrSurface::WorstCaseSize(const GrSurfaceDesc& desc, bool useNextPow2) {
+size_t GrSurface::WorstCaseSize(const GrSurfaceDesc& desc, GrRenderable renderable,
+                                int renderTargetSampleCnt, bool binSize) {
     size_t size;
 
-    int width = useNextPow2
-                ? SkTMax(GrResourceProvider::kMinScratchTextureSize, GrNextPow2(desc.fWidth))
-                : desc.fWidth;
-    int height = useNextPow2
-                ? SkTMax(GrResourceProvider::kMinScratchTextureSize, GrNextPow2(desc.fHeight))
-                : desc.fHeight;
+    int width  = binSize ? GrResourceProvider::MakeApprox(desc.fWidth)  : desc.fWidth;
+    int height = binSize ? GrResourceProvider::MakeApprox(desc.fHeight) : desc.fHeight;
 
-    bool isRenderTarget = SkToBool(desc.fFlags & kRenderTarget_GrSurfaceFlag);
-    if (isRenderTarget) {
+    if (renderable == GrRenderable::kYes) {
         // We own one color value for each MSAA sample.
-        SkASSERT(desc.fSampleCnt >= 1);
-        int colorValuesPerPixel = desc.fSampleCnt;
-        if (desc.fSampleCnt > 1) {
+        SkASSERT(renderTargetSampleCnt >= 1);
+        int colorValuesPerPixel = renderTargetSampleCnt;
+        if (renderTargetSampleCnt > 1) {
             // Worse case, we own the resolve buffer so that is one more sample per pixel.
             colorValuesPerPixel += 1;
         }
@@ -46,6 +41,7 @@ size_t GrSurface::WorstCaseSize(const GrSurfaceDesc& desc, bool useNextPow2) {
         size = colorValuesPerPixel * colorBytes;
         size += colorBytes/3; // in case we have to mipmap
     } else {
+        SkASSERT(renderTargetSampleCnt == 1);
         if (GrPixelConfigIsCompressed(desc.fConfig)) {
             size = GrCompressedFormatDataSize(desc.fConfig, width, height);
         } else {
@@ -63,15 +59,11 @@ size_t GrSurface::ComputeSize(GrPixelConfig config,
                               int height,
                               int colorSamplesPerPixel,
                               GrMipMapped mipMapped,
-                              bool useNextPow2) {
+                              bool binSize) {
     size_t colorSize;
 
-    width = useNextPow2
-            ? SkTMax(GrResourceProvider::kMinScratchTextureSize, GrNextPow2(width))
-            : width;
-    height = useNextPow2
-            ? SkTMax(GrResourceProvider::kMinScratchTextureSize, GrNextPow2(height))
-            : height;
+    width  = binSize ? GrResourceProvider::MakeApprox(width)  : width;
+    height = binSize ? GrResourceProvider::MakeApprox(height) : height;
 
     SkASSERT(kUnknown_GrPixelConfig != config);
     if (GrPixelConfigIsCompressed(config)) {

@@ -84,14 +84,13 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(EGLImageTest, reporter, ctxInfo) {
 
     // Use GL Context 1 to create a texture unknown to GrContext.
     context1->flush();
-    GrGpu* gpu1 = context1->priv().getGpu();
     static const int kSize = 100;
     backendTexture1 =
         context1->createBackendTexture(kSize, kSize, kRGBA_8888_SkColorType,
                                        SkColors::kTransparent,
                                        GrMipMapped::kNo, GrRenderable::kNo, GrProtected::kNo);
 
-    if (!backendTexture1.isValid() || !gpu1->isTestingOnlyBackendTexture(backendTexture1)) {
+    if (!backendTexture1.isValid()) {
         ERRORF(reporter, "Error creating texture for EGL Image");
         cleanup(glCtx0, externalTexture.fID, glCtx1.get(), context1, &backendTexture1, image);
         return;
@@ -154,11 +153,10 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(EGLImageTest, reporter, ctxInfo) {
 
     // Wrap this texture ID in a GrTexture
     GrBackendTexture backendTex(kSize, kSize, GrMipMapped::kNo, externalTexture);
-    backendTex.setPixelConfig(kRGBA_8888_GrPixelConfig);
 
     // TODO: If I make this TopLeft origin to match resolve_origin calls for kDefault, this test
     // fails on the Nexus5. Why?
-    sk_sp<GrTextureContext> surfaceContext = context0->priv().makeBackendTextureContext(
+    auto surfaceContext = context0->priv().makeBackendTextureContext(
             backendTex, kBottomLeft_GrSurfaceOrigin, GrColorType::kRGBA_8888, kPremul_SkAlphaType,
             nullptr);
 
@@ -180,7 +178,7 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(EGLImageTest, reporter, ctxInfo) {
 
     // Should not be able to wrap as a RT
     {
-        sk_sp<GrRenderTargetContext> temp = context0->priv().makeBackendTextureRenderTargetContext(
+        auto temp = context0->priv().makeBackendTextureRenderTargetContext(
                 backendTex, kBottomLeft_GrSurfaceOrigin, 1, GrColorType::kRGBA_8888, nullptr);
         if (temp) {
             ERRORF(reporter, "Should not be able to wrap an EXTERNAL texture as a RT.");

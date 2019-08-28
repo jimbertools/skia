@@ -756,9 +756,9 @@ void IRGenerator::convertFunction(const ASTNode& f) {
                 bool valid;
                 switch (parameters.size()) {
                     case 3:
-                        valid = parameters[0]->fType == *fContext.fInt_Type &&
+                        valid = parameters[0]->fType == *fContext.fFloat_Type &&
                                 parameters[0]->fModifiers.fFlags == 0 &&
-                                parameters[1]->fType == *fContext.fInt_Type &&
+                                parameters[1]->fType == *fContext.fFloat_Type &&
                                 parameters[1]->fModifiers.fFlags == 0 &&
                                 parameters[2]->fType == *fContext.fHalf4_Type &&
                                 parameters[2]->fModifiers.fFlags == (Modifiers::kIn_Flag |
@@ -773,8 +773,8 @@ void IRGenerator::convertFunction(const ASTNode& f) {
                         valid = false;
                 }
                 if (!valid) {
-                    fErrors.error(f.fOffset, "pipeline stage 'main' must be declared main(int, "
-                                             "int, inout half4) or main(inout half4)");
+                    fErrors.error(f.fOffset, "pipeline stage 'main' must be declared main(float, "
+                                             "float, inout half4) or main(inout half4)");
                     return;
                 }
                 break;
@@ -1180,6 +1180,29 @@ std::unique_ptr<Expression> IRGenerator::convertIdentifier(const ASTNode& identi
                         }
                     }
 #endif
+            }
+            if (fKind == Program::kFragmentProcessor_Kind &&
+                (var->fModifiers.fFlags & Modifiers::kIn_Flag) &&
+                !(var->fModifiers.fFlags & Modifiers::kUniform_Flag) &&
+                !var->fModifiers.fLayout.fKey &&
+                var->fModifiers.fLayout.fBuiltin == -1 &&
+                var->fType.nonnullable() != *fContext.fFragmentProcessor_Type &&
+                var->fType.kind() != Type::kSampler_Kind) {
+                bool valid = false;
+                for (const auto& decl : fFile->root()) {
+                    if (decl.fKind == ASTNode::Kind::kSection) {
+                        ASTNode::SectionData section = decl.getSectionData();
+                        if (section.fName == "setData") {
+                            valid = true;
+                            break;
+                        }
+                    }
+                }
+                if (!valid) {
+                    fErrors.error(identifier.fOffset, "'in' variable must be either 'uniform' or "
+                                                      "'layout(key)', or there must be a custom "
+                                                      "@setData function");
+                }
             }
             // default to kRead_RefKind; this will be corrected later if the variable is written to
             return std::unique_ptr<VariableReference>(new VariableReference(

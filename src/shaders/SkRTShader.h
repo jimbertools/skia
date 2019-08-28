@@ -22,16 +22,14 @@ class SkMatrix;
 
 class SkRTShader : public SkShaderBase {
 public:
-    SkRTShader(SkString sksl, sk_sp<SkData> inputs, const SkMatrix* localMatrix, bool isOpaque);
-
-#if SK_SUPPORT_GPU
-    std::unique_ptr<GrFragmentProcessor> asFragmentProcessor(const GrFPArgs&) const override {
-        // TODO
-        return nullptr;
-    }
-#endif
+    SkRTShader(int index, SkString sksl, sk_sp<SkData> inputs, const SkMatrix* localMatrix,
+               bool isOpaque);
 
     bool isOpaque() const override { return fIsOpaque; }
+
+#if SK_SUPPORT_GPU
+    std::unique_ptr<GrFragmentProcessor> asFragmentProcessor(const GrFPArgs&) const override;
+#endif
 
 protected:
     void flatten(SkWriteBuffer&) const override;
@@ -42,12 +40,25 @@ private:
 
     SkString fSkSL;
     sk_sp<SkData> fInputs;
+    const uint32_t fUniqueID;
     const bool fIsOpaque;
 
     mutable SkMutex fByteCodeMutex;
     mutable std::unique_ptr<SkSL::ByteCode> fByteCode;
 
     typedef SkShaderBase INHERITED;
+};
+
+class SkRuntimeShaderFactory {
+public:
+    SkRuntimeShaderFactory(SkString sksl, bool isOpaque);
+
+    sk_sp<SkShader> make(sk_sp<SkData> inputs, const SkMatrix* localMatrix);
+
+private:
+    int fIndex;
+    SkString fSkSL;
+    bool fIsOpaque;
 };
 
 #endif
