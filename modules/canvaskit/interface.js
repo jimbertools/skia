@@ -480,6 +480,7 @@ CanvasKit.onRuntimeInitialized = function() {
     return vert;
   }
 
+
   CanvasKit.SkImage.prototype.encodeToData = function() {
     if (!arguments.length) {
       return this._encodeToData();
@@ -599,6 +600,10 @@ CanvasKit.onRuntimeInitialized = function() {
       CanvasKit._free(colorPtr);
     }
 
+  }
+
+  CanvasKit.SkCanvas.prototype.setTransform = function(a, b, c, d, e, f) {
+    this.setMatrix([a, c, e, b, d, f, 0, 0, 1])
   }
 
   // str can be either a text string or a ShapedText object
