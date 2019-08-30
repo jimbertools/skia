@@ -16,7 +16,7 @@
 #include "src/gpu/GrClip.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrGpuResourcePriv.h"
-#include "src/gpu/GrOpList.h"
+#include "src/gpu/GrOpsTask.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrStencilAttachment.h"
@@ -26,14 +26,13 @@
 #include "src/gpu/GrTextureRenderTargetProxy.h"
 
 #ifdef SK_DEBUG
-#include "include/gpu/GrRenderTarget.h"
+#include "src/gpu/GrRenderTarget.h"
 #include "src/gpu/GrRenderTargetPriv.h"
 
 static bool is_valid_fully_lazy(const GrSurfaceDesc& desc, SkBackingFit fit) {
     return desc.fWidth <= 0 &&
            desc.fHeight <= 0 &&
            desc.fConfig != kUnknown_GrPixelConfig &&
-           desc.fSampleCnt == 1 &&
            SkBackingFit::kApprox == fit;
 }
 
@@ -70,7 +69,7 @@ GrSurfaceProxy::GrSurfaceProxy(LazyInstantiateCallback&& callback, LazyInstantia
         , fLazyInstantiationType(lazyType)
         , fIsProtected(isProtected)
         , fGpuMemorySize(kInvalidGpuMemorySize)
-        , fLastOpList(nullptr) {
+        , fLastRenderTask(nullptr) {
     SkASSERT(fFormat.isValid());
     // NOTE: the default fUniqueID ctor pulls a value from the same pool as the GrGpuResources.
     if (fLazyInstantiateCallback) {
@@ -103,14 +102,14 @@ GrSurfaceProxy::GrSurfaceProxy(sk_sp<GrSurface> surface, GrSurfaceOrigin origin,
         , fUniqueID(fTarget->uniqueID())  // Note: converting from unique resource ID to a proxy ID!
         , fIsProtected(fTarget->isProtected() ? GrProtected::kYes : GrProtected::kNo)
         , fGpuMemorySize(kInvalidGpuMemorySize)
-        , fLastOpList(nullptr) {
+        , fLastRenderTask(nullptr) {
     SkASSERT(fFormat.isValid());
 }
 
 GrSurfaceProxy::~GrSurfaceProxy() {
-    // For this to be deleted the opList that held a ref on it (if there was one) must have been
+    // For this to be deleted the opsTask that held a ref on it (if there was one) must have been
     // deleted. Which would have cleared out this back pointer.
-    SkASSERT(!fLastOpList);
+    SkASSERT(!fLastRenderTask);
 }
 
 bool GrSurfaceProxyPriv::AttachStencilIfNeeded(GrResourceProvider* resourceProvider,
@@ -131,7 +130,8 @@ bool GrSurfaceProxyPriv::AttachStencilIfNeeded(GrResourceProvider* resourceProvi
 }
 
 sk_sp<GrSurface> GrSurfaceProxy::createSurfaceImpl(GrResourceProvider* resourceProvider,
-                                                   int sampleCnt, int minStencilSampleCount,
+                                                   int sampleCnt,
+                                                   int minStencilSampleCount,
                                                    GrRenderable renderable,
                                                    GrMipMapped mipMapped) const {
     SkASSERT(GrSurfaceProxy::LazyState::kNot == this->lazyInstantiationState());
@@ -140,7 +140,6 @@ sk_sp<GrSurface> GrSurfaceProxy::createSurfaceImpl(GrResourceProvider* resourceP
     desc.fWidth = fWidth;
     desc.fHeight = fHeight;
     desc.fConfig = fConfig;
-    desc.fSampleCnt = sampleCnt;
 
     // The explicit resource allocator requires that any resources it pulls out of the
     // cache have no pending IO.
@@ -162,20 +161,28 @@ sk_sp<GrSurface> GrSurfaceProxy::createSurfaceImpl(GrResourceProvider* resourceP
             texels[i].fPixels = nullptr;
             texels[i].fRowBytes = 0;
         }
-
-        surface = resourceProvider->createTexture(desc, renderable, fBudgeted, fIsProtected,
-                                                  texels.get(), mipCount);
+        surface = resourceProvider->createTexture(desc, fFormat, renderable, sampleCnt, fBudgeted,
+                                                  fIsProtected, texels.get(), mipCount);
+#ifdef SK_DEBUG
         if (surface) {
-            SkASSERT(surface->asTexture());
-            SkASSERT(GrMipMapped::kYes == surface->asTexture()->texturePriv().mipMapped());
+            const GrTextureProxy* thisTexProxy = this->asTextureProxy();
+            SkASSERT(thisTexProxy);
+
+            GrTexture* texture = surface->asTexture();
+            SkASSERT(texture);
+
+            SkASSERT(GrMipMapped::kYes == texture->texturePriv().mipMapped());
+            SkASSERT(thisTexProxy->fInitialMipMapsStatus == texture->texturePriv().mipMapsStatus());
         }
+#endif
     } else {
         if (SkBackingFit::kApprox == fFit) {
-            surface = resourceProvider->createApproxTexture(desc, renderable, fIsProtected,
-                                                            resourceProviderFlags);
+            surface = resourceProvider->createApproxTexture(desc, fFormat, renderable, sampleCnt,
+                                                            fIsProtected, resourceProviderFlags);
         } else {
-            surface = resourceProvider->createTexture(desc, renderable, fBudgeted, fIsProtected,
-                                                      resourceProviderFlags);
+            surface =
+                    resourceProvider->createTexture(desc, fFormat, renderable, sampleCnt, fBudgeted,
+                                                    fIsProtected, resourceProviderFlags);
         }
     }
     if (!surface) {
@@ -284,23 +291,19 @@ void GrSurfaceProxy::computeScratchKey(GrScratchKey* key) const {
                                      mipMapped, key);
 }
 
-void GrSurfaceProxy::setLastOpList(GrOpList* opList) {
+void GrSurfaceProxy::setLastRenderTask(GrRenderTask* renderTask) {
 #ifdef SK_DEBUG
-    if (fLastOpList) {
-        SkASSERT(fLastOpList->isClosed());
+    if (fLastRenderTask) {
+        SkASSERT(fLastRenderTask->isClosed());
     }
 #endif
 
     // Un-reffed
-    fLastOpList = opList;
+    fLastRenderTask = renderTask;
 }
 
-GrRenderTargetOpList* GrSurfaceProxy::getLastRenderTargetOpList() {
-    return fLastOpList ? fLastOpList->asRenderTargetOpList() : nullptr;
-}
-
-GrTextureOpList* GrSurfaceProxy::getLastTextureOpList() {
-    return fLastOpList ? fLastOpList->asTextureOpList() : nullptr;
+GrOpsTask* GrSurfaceProxy::getLastOpsTask() {
+    return fLastRenderTask ? fLastRenderTask->asOpsTask() : nullptr;
 }
 
 int GrSurfaceProxy::worstCaseWidth() const {
@@ -363,9 +366,9 @@ sk_sp<GrTextureProxy> GrSurfaceProxy::Copy(GrRecordingContext* context,
     }
     auto colorType = GrPixelConfigToColorType(src->config());
     if (src->backendFormat().textureType() != GrTextureType::kExternal) {
-        sk_sp<GrTextureContext> dstContext(context->priv().makeDeferredTextureContext(
+        auto dstContext = context->priv().makeDeferredTextureContext(
                 fit, width, height, colorType, kUnknown_SkAlphaType, nullptr, mipMapped,
-                src->origin(), budgeted, isProtected));
+                src->origin(), budgeted, isProtected);
         if (!dstContext) {
             return nullptr;
         }
@@ -374,7 +377,7 @@ sk_sp<GrTextureProxy> GrSurfaceProxy::Copy(GrRecordingContext* context,
         }
     }
     if (src->asTextureProxy()) {
-        sk_sp<GrRenderTargetContext> dstContext = context->priv().makeDeferredRenderTargetContext(
+        auto dstContext = context->priv().makeDeferredRenderTargetContext(
                 fit, width, height, colorType, nullptr, 1, mipMapped, src->origin(), nullptr,
                 budgeted);
 
@@ -408,7 +411,7 @@ GrInternalSurfaceFlags GrSurfaceProxy::testingOnly_getFlags() const {
 }
 #endif
 
-void GrSurfaceProxyPriv::exactify() {
+void GrSurfaceProxyPriv::exactify(bool allocatedCaseOnly) {
     SkASSERT(GrSurfaceProxy::LazyState::kFully != fProxy->lazyInstantiationState());
     if (this->isExact()) {
         return;
@@ -426,6 +429,17 @@ void GrSurfaceProxyPriv::exactify() {
         fProxy->fHeight = fProxy->fTarget->height();
         return;
     }
+
+#ifndef SK_CRIPPLE_TEXTURE_REUSE
+    // In the post-implicit-allocation world we can't convert this proxy to be exact fit
+    // at this point. With explicit allocation switching this to exact will result in a
+    // different allocation at flush time. With implicit allocation, allocation would occur
+    // at draw time (rather than flush time) so this pathway was encountered less often (if
+    // at all).
+    if (allocatedCaseOnly) {
+        return;
+    }
+#endif
 
     // The kApprox uninstantiated case. Making this proxy be exact should be okay.
     // It could mess things up if prior decisions were based on the approximate size.

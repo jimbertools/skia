@@ -150,9 +150,8 @@ public:
         SkImageInfo ii = SkImageInfo::Make(fWidth, fHeight, fColorType,
                                            kPremul_SkAlphaType, fColorSpace);
 
-        const GrCaps* caps = context->priv().caps();
-        GrBackendFormat backendFormat =
-                caps->getBackendFormatFromColorType(SkColorTypeToGrColorType(fColorType));
+        GrBackendFormat backendFormat = context->defaultBackendFormat(fColorType,
+                                                                      GrRenderable::kYes);
         if (!backendFormat.isValid()) {
             return SkSurfaceCharacterization();
         }
@@ -373,8 +372,7 @@ void DDLSurfaceCharacterizationTestImpl(GrContext* context, skiatest::Reporter* 
 
         if (SurfaceParameters::kSampleCount == i) {
             int supportedSampleCount = caps->getRenderTargetSampleCount(
-                    params.sampleCount(), SkColorTypeToGrColorType(params.colorType()),
-                    backend.getBackendFormat());
+                    params.sampleCount(), backend.getBackendFormat());
             if (1 == supportedSampleCount) {
                 // If changing the sample count won't result in a different
                 // surface characterization, skip this step
@@ -764,8 +762,9 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(DDLInvalidRecorder, reporter, ctxInfo) {
         REPORTER_ASSERT(reporter, !recorder.getCanvas());
         REPORTER_ASSERT(reporter, !recorder.detach());
 
-        const GrCaps* caps = context->priv().caps();
-        GrBackendFormat format = caps->getBackendFormatFromColorType(GrColorType::kRGBA_8888);
+        GrBackendFormat format = context->defaultBackendFormat(kRGBA_8888_SkColorType,
+                                                               GrRenderable::kNo);
+        SkASSERT(format.isValid());
 
         sk_sp<SkImage> image = recorder.makePromiseTexture(
                 format, 32, 32, GrMipMapped::kNo,
@@ -836,8 +835,8 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(DDLSkSurfaceFlush, reporter, ctxInfo) {
 
     GrBackendTexture backendTexture;
 
-    if (!create_backend_texture(context, &backendTexture, ii, GrMipMapped::kNo, SK_ColorCYAN,
-                                GrRenderable::kNo)) {
+    if (!create_backend_texture(context, &backendTexture, ii, SkColors::kCyan,
+                                GrMipMapped::kNo, GrRenderable::kNo)) {
         REPORTER_ASSERT(reporter, false);
         return;
     }
@@ -850,8 +849,9 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(DDLSkSurfaceFlush, reporter, ctxInfo) {
     {
         SkDeferredDisplayListRecorder recorder(characterization);
 
-        const GrCaps* caps = context->priv().caps();
-        GrBackendFormat format = caps->getBackendFormatFromColorType(GrColorType::kRGBA_8888);
+        GrBackendFormat format = context->defaultBackendFormat(kRGBA_8888_SkColorType,
+                                                               GrRenderable::kNo);
+        SkASSERT(format.isValid());
 
         sk_sp<SkImage> promiseImage = recorder.makePromiseTexture(
                 format, 32, 32, GrMipMapped::kNo,

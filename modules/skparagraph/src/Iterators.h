@@ -22,25 +22,22 @@ public:
         : fText(utf8), fCurrentChar(utf8.begin()), fFontResolver(fontResolver) { }
 
     void consume() override {
-      SkASSERT(fCurrentChar < fText.end());
-      SkString locale;
-      auto found = fFontResolver->findFirst(fCurrentChar, &fFont, &fLineHeight);
-      SkASSERT(found);
 
-      // Move until we find the first character that cannot be resolved with the current font
-      while (++fCurrentChar != fText.end()) {
-          SkFont font;
-          SkScalar height;
-          SkString locale;
-          found = fFontResolver->findNext(fCurrentChar, &font, &height);
-          if (found) {
-              if (fFont == font && fLineHeight == height) {
-                  continue;
-              }
-              break;
-          }
-      }
-  }
+        SkASSERT(fCurrentChar < fText.end());
+        fFontResolver->findNext(fCurrentChar, &fFont, &fLineHeight);
+
+        // Move until we find the first character that cannot be resolved with the current font
+        while (++fCurrentChar != fText.end()) {
+            SkFont font;
+            SkScalar height;
+            if (fFontResolver->findNext(fCurrentChar, &font, &height)) {
+                if (fFont == font && fLineHeight == height) {
+                    continue;
+                }
+                break;
+            }
+        }
+    }
 
     size_t endOfCurrentRun() const override { return fCurrentChar - fText.begin(); }
     bool atEnd() const override { return fCurrentChar == fText.end(); }
@@ -58,7 +55,7 @@ private:
 
 class LangIterator final : public SkShaper::LanguageRunIterator {
 public:
-    LangIterator(SkSpan<const char> utf8, SkSpan<TextBlock> styles, TextStyle defaultStyle)
+    LangIterator(SkSpan<const char> utf8, SkSpan<Block> styles, const TextStyle& defaultStyle)
             : fText(utf8)
             , fTextStyles(styles)
             , fCurrentChar(utf8.begin())
@@ -73,25 +70,25 @@ public:
             return;
         }
 
-        fCurrentChar = fCurrentStyle->text().end();
-        fCurrentLocale = fCurrentStyle->style().getLocale();
-        while (++fCurrentStyle != fTextStyles.end()) {
-            if (fCurrentStyle->style().getLocale() != fCurrentLocale) {
+        fCurrentChar = fText.begin() + fCurrentStyle->fRange.end;
+        fCurrentLocale = fCurrentStyle->fStyle.getLocale();
+        while (++fCurrentStyle != fTextStyles.end() && !fCurrentStyle->fStyle.isPlaceholder()) {
+            if (fCurrentStyle->fStyle.getLocale() != fCurrentLocale) {
                 break;
             }
-            fCurrentChar = fCurrentStyle->text().end();
+            fCurrentChar = fText.begin() + fCurrentStyle->fRange.end;
         }
     }
 
     size_t endOfCurrentRun() const override { return fCurrentChar - fText.begin(); }
-    bool atEnd() const override { return fCurrentChar == fText.end(); }
+    bool atEnd() const override { return fCurrentChar >= fText.end(); }
     const char* currentLanguage() const override { return fCurrentLocale.c_str(); }
 
 private:
     SkSpan<const char> fText;
-    SkSpan<TextBlock> fTextStyles;
+    SkSpan<Block> fTextStyles;
     const char* fCurrentChar;
-    TextBlock* fCurrentStyle;
+    Block* fCurrentStyle;
     SkString fCurrentLocale;
 };
 }  // namespace textlayout

@@ -30,7 +30,7 @@ public:
 
     bool canUseMixedSamples(const GrCaps& caps) const {
         return caps.mixedSamplesSupport() && !this->glRTFBOIDIs0() &&
-               caps.internalMultisampleCount(this->config()) > 0 &&
+               caps.internalMultisampleCount(this->backendFormat()) > 0 &&
                this->canChangeStencilAttachment();
     }
 
@@ -76,7 +76,7 @@ protected:
 
     // Deferred version
     GrRenderTargetProxy(const GrCaps&, const GrBackendFormat&, const GrSurfaceDesc&,
-                        GrSurfaceOrigin, const GrSwizzle& textureSwizzle,
+                        int sampleCount, GrSurfaceOrigin, const GrSwizzle& textureSwizzle,
                         const GrSwizzle& outputSwizzle, SkBackingFit, SkBudgeted, GrProtected,
                         GrInternalSurfaceFlags);
 
@@ -93,10 +93,10 @@ protected:
     // The minimal knowledge version is used for CCPR where we are generating an atlas but we do not
     // know the final size until flush time.
     GrRenderTargetProxy(LazyInstantiateCallback&&, LazyInstantiationType lazyType,
-                        const GrBackendFormat&, const GrSurfaceDesc&, GrSurfaceOrigin,
-                        const GrSwizzle& textureSwizzle, const GrSwizzle& outputSwizzle,
-                        SkBackingFit, SkBudgeted, GrProtected, GrInternalSurfaceFlags,
-                        WrapsVkSecondaryCB wrapsVkSecondaryCB);
+                        const GrBackendFormat&, const GrSurfaceDesc&, int sampleCount,
+                        GrSurfaceOrigin, const GrSwizzle& textureSwizzle,
+                        const GrSwizzle& outputSwizzle, SkBackingFit, SkBudgeted, GrProtected,
+                        GrInternalSurfaceFlags, WrapsVkSecondaryCB wrapsVkSecondaryCB);
 
     // Wrapped version
     GrRenderTargetProxy(sk_sp<GrSurface>, GrSurfaceOrigin, const GrSwizzle& textureSwizzle,
@@ -134,10 +134,6 @@ private:
     // bytes would work since it always goes up to 8 byte alignment, but we use 10 to more explicit
     // about what we're doing).
     char               fDummyPadding[10];
-
-    // For wrapped render targets the actual GrRenderTarget is stored in the GrIORefProxy class.
-    // For deferred proxies that pointer is filled in when we need to instantiate the
-    // deferred resource.
 
     typedef GrSurfaceProxy INHERITED;
 };

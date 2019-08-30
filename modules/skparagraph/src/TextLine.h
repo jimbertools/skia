@@ -13,69 +13,60 @@
 namespace skia {
 namespace textlayout {
 
-class TextBlock {
-public:
-    TextBlock() : fText(), fTextStyle() {}
-    TextBlock(SkSpan<const char> text, const TextStyle& style) : fText(text), fTextStyle(style) {}
-
-    SkSpan<const char> text() const { return fText; }
-    TextStyle style() const { return fTextStyle; }
-
-    void add(SkSpan<const char> tail) {
-        SkASSERT(fText.end() == tail.begin());
-        fText = SkSpan<const char>(fText.begin(), fText.size() + tail.size());
-    }
-
-protected:
-    SkSpan<const char> fText;
-    TextStyle fTextStyle;
-};
-
 class TextLine {
 public:
     TextLine() = default;
-    TextLine(TextLine&&);
     ~TextLine() = default;
 
-    TextLine(SkVector offset, SkVector advance, SkSpan<const TextBlock> blocks,
-             SkSpan<const char> text, SkSpan<const char> textWithSpaces,
-             SkSpan<const Cluster> clusters, size_t start, size_t end, LineMetrics sizes);
+    TextLine(ParagraphImpl* master,
+             SkVector offset,
+             SkVector advance,
+             BlockRange blocks,
+             TextRange text,
+             TextRange textWithSpaces,
+             ClusterRange clusters,
+             ClusterRange clustersWithGhosts,
+             SkScalar widthWithSpaces,
+             LineMetrics sizes);
 
-    SkSpan<const char> trimmedText() const { return fText; }
-     SkSpan<const char> textWithSpaces() const { return fTextWithSpaces; }
-    SkSpan<const Cluster> clusters() const { return fClusters; }
-    SkVector offset() const { return fOffset + SkVector::Make(fShift, 0); }
+    void setMaster(ParagraphImpl* master) { fMaster = master; }
+
+    TextRange trimmedText() const { return fTextRange; }
+    TextRange textWithSpaces() const { return fTextWithWhitespacesRange; }
+    ClusterRange clusters() const { return fClusterRange; }
+    ClusterRange clustersWithSpaces() { return fGhostClusterRange; }
     Run* ellipsis() const { return fEllipsis.get(); }
     LineMetrics sizes() const { return fSizes; }
-    bool empty() const { return fText.empty(); }
+    bool empty() const { return fTextRange.empty(); }
 
-    SkScalar shift() const { return fShift; }
     SkScalar height() const { return fAdvance.fY; }
     SkScalar width() const {
         return fAdvance.fX + (fEllipsis != nullptr ? fEllipsis->fAdvance.fX : 0);
     }
-    void shiftTo(SkScalar shift) { fShift = shift; }
+    SkScalar shift() const { return fShift; }
+    SkVector offset() const;
 
     SkScalar alphabeticBaseline() const { return fSizes.alphabeticBaseline(); }
     SkScalar ideographicBaseline() const { return fSizes.ideographicBaseline(); }
     SkScalar baseline() const { return fSizes.baseline(); }
-    SkScalar roundingDelta() const { return fSizes.delta(); }
 
-    using StyleVisitor = std::function<SkScalar(SkSpan<const char> text, const TextStyle& style,
+    using StyleVisitor = std::function<SkScalar(TextRange textRange, const TextStyle& style,
                                                 SkScalar offsetX)>;
     void iterateThroughStylesInTextOrder(StyleType styleType, const StyleVisitor& visitor) const;
 
-    using RunVisitor = std::function<bool(Run* run, size_t pos, size_t size, SkRect clip,
-                                          SkScalar shift, bool clippingNeeded)>;
-    SkScalar iterateThroughRuns(SkSpan<const char> text,
+    SkScalar calculateLeftVisualOffset(TextRange textRange) const;
+
+    using RunVisitor = std::function<bool(Run* run, size_t pos, size_t size, TextRange text,
+                                          SkRect clip, SkScalar shift, bool clippingNeeded)>;
+    SkScalar iterateThroughRuns(TextRange textRange,
                                 SkScalar offsetX,
-                                bool includeEmptyText,
+                                bool includeGhostWhitespaces,
                                 const RunVisitor& visitor) const;
 
-    using ClustersVisitor = std::function<bool(const Cluster* cluster)>;
-    void iterateThroughClustersInGlyphsOrder(bool reverse, const ClustersVisitor& visitor) const;
+    using ClustersVisitor = std::function<bool(const Cluster* cluster, ClusterIndex index, bool leftToRight, bool ghost)>;
+    void iterateThroughClustersInGlyphsOrder(bool reverse, bool includeGhosts, const ClustersVisitor& visitor) const;
 
-    void format(TextAlign effectiveAlign, SkScalar maxWidth, bool last);
+    void format(TextAlign effectiveAlign, SkScalar maxWidth);
     void paint(SkCanvas* canvas);
 
     void createEllipsis(SkScalar maxWidth, const SkString& ellipsis, bool ltr);
@@ -84,47 +75,59 @@ public:
     void scanStyles(StyleType style, const StyleVisitor& visitor);
     void scanRuns(const RunVisitor& visitor);
 
+    TextAlign assumedTextAlign() const;
+
+    void setMaxRunMetrics(const LineMetrics& metrics) { fMaxRunMetrics = metrics; }
+    LineMetrics getMaxRunMetrics() const { return fMaxRunMetrics; }
+
 private:
+
     Run* shapeEllipsis(const SkString& ellipsis, Run* run);
     void justify(SkScalar maxWidth);
 
-    SkRect measureTextInsideOneRun(SkSpan<const char> text,
+    SkRect measureTextInsideOneRun(TextRange textRange,
                                    Run* run,
                                    size_t& pos,
                                    size_t& size,
+                                   bool includeGhostSpaces,
                                    bool& clippingNeeded) const;
 
-    SkScalar paintText(SkCanvas* canvas, SkSpan<const char> text, const TextStyle& style,
-                       SkScalar offsetX) const;
-    SkScalar paintBackground(SkCanvas* canvas, SkSpan<const char> text, const TextStyle& style,
+    SkScalar paintText(SkCanvas* canvas, TextRange textRange, const TextStyle& style, SkScalar offsetX) const;
+    SkScalar paintBackground(SkCanvas* canvas, TextRange textRange, const TextStyle& style,
                              SkScalar offsetX) const;
-    SkScalar paintShadow(SkCanvas* canvas, SkSpan<const char> text, const TextStyle& style,
+    SkScalar paintShadow(SkCanvas* canvas, TextRange textRange, const TextStyle& style,
                          SkScalar offsetX) const;
-    SkScalar paintDecorations(SkCanvas* canvas, SkSpan<const char> text, const TextStyle& style,
+    SkScalar paintDecorations(SkCanvas* canvas, TextRange textRange, const TextStyle& style,
                               SkScalar offsetX) const;
 
     void computeDecorationPaint(SkPaint& paint, SkRect clip, const TextStyle& style,
                                 SkPath& path) const;
 
+    SkScalar computeDecorationThickness(const TextStyle& style) const;
+    SkScalar computeDecorationPosition(const TextStyle& style) const;
+
     bool contains(const Cluster* cluster) const {
-        return cluster->text().begin() >= fText.begin() && cluster->text().end() <= fText.end();
+        return fTextRange.contains(cluster->textRange());
     }
 
-    SkSpan<const TextBlock> fBlocks;
-    SkSpan<const char> fText;
-    SkSpan<const char> fTextWithSpaces;
-    SkSpan<const Cluster> fClusters;
-    // TODO: To clip by glyph:
-    //size_t fStartPos;
-    //size_t fEndPos;
-    SkTArray<Run*, true> fLogical;
-    SkScalar fShift;                   // Shift to left - right - center
-    SkVector fAdvance;                 // Text size
-    SkVector fOffset;                  // Text position
-    std::unique_ptr<Run> fEllipsis;  // In case the line ends with the ellipsis
-    LineMetrics fSizes;              // Line metrics as a max of all run metrics
+    ParagraphImpl* fMaster;
+    BlockRange fBlockRange;
+    TextRange fTextRange;
+    TextRange fTextWithWhitespacesRange;
+    ClusterRange fClusterRange;
+    ClusterRange fGhostClusterRange;
 
-    static SkTHashMap<SkFont, Run> fEllipsisCache;  // All found so far shapes of ellipsis
+    SkTArray<size_t, true> fLogical;
+    SkVector fAdvance;                  // Text size
+    SkVector fOffset;                   // Text position
+    SkScalar fShift;                    // Left right
+    SkScalar fWidthWithSpaces;
+    std::shared_ptr<Run> fEllipsis;     // In case the line ends with the ellipsis
+    LineMetrics fSizes;                 // Line metrics as a max of all run metrics and struts
+    LineMetrics fMaxRunMetrics;         // No struts - need it for GetRectForRange(max height)
+    bool fHasBackground;
+    bool fHasShadows;
+    bool fHasDecorations;
 };
 }  // namespace textlayout
 }  // namespace skia

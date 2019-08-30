@@ -33,6 +33,7 @@ const (
 	ISOLATE_GCLOUD_LINUX_NAME  = "Housekeeper-PerCommit-IsolateGCloudLinux"
 	ISOLATE_SKIMAGE_NAME       = "Housekeeper-PerCommit-IsolateSkImage"
 	ISOLATE_SKP_NAME           = "Housekeeper-PerCommit-IsolateSKP"
+	ISOLATE_MSKP_NAME           = "Housekeeper-PerCommit-IsolateMSKP"
 	ISOLATE_SVG_NAME           = "Housekeeper-PerCommit-IsolateSVG"
 	ISOLATE_NDK_LINUX_NAME     = "Housekeeper-PerCommit-IsolateAndroidNDKLinux"
 	ISOLATE_SDK_LINUX_NAME     = "Housekeeper-PerCommit-IsolateAndroidSDKLinux"
@@ -41,7 +42,7 @@ const (
 	DEFAULT_OS_DEBIAN    = "Debian-9.4"
 	DEFAULT_OS_LINUX_GCE = "Debian-9.8"
 	DEFAULT_OS_MAC       = "Mac-10.13.6"
-	DEFAULT_OS_WIN       = "Windows-2016Server-14393"
+	DEFAULT_OS_WIN       = "Windows-Server-14393"
 
 	// Small is a 2-core machine.
 	// TODO(dogben): Would n1-standard-1 or n1-standard-2 be sufficient?
@@ -206,6 +207,10 @@ var (
 			cipdPkg: "svg",
 			path:    "svg",
 		},
+		ISOLATE_MSKP_NAME: {
+			cipdPkg: "mskp",
+			path:    "mskp",
+		},
 		ISOLATE_NDK_LINUX_NAME: {
 			cipdPkg: "android_ndk_linux",
 			path:    "android_ndk_linux",
@@ -228,11 +233,14 @@ var (
 // Config contains general configuration information.
 type Config struct {
 	// Directory containing assets. Assumed to be relative to the directory
-	// which contains the calling gen_tasks.go file.
+	// which contains the calling gen_tasks.go file. If not specified, uses
+	// the infra/bots/assets from this repo.
 	AssetsDir string `json:"assets_dir"`
 
 	// Path to the builder name schema JSON file. Assumed to be relative to
-	// the directory which contains the calling gen_tasks.go file.
+	// the directory which contains the calling gen_tasks.go file. If not
+	// specified, uses infra/bots/recipe_modules/builder_name_schema/builder_name_schema.json
+	// from this repo.
 	BuilderNameSchemaFile string `json:"builder_name_schema"`
 
 	// URL of the Skia Gold known hashes endpoint.
@@ -381,7 +389,6 @@ func getCallingDirName() string {
 // builder is a wrapper for specs.TasksCfgBuilder.
 type builder struct {
 	*specs.TasksCfgBuilder
-	callingFileName  string
 	cfg              *Config
 	jobNameSchema    *JobNameSchema
 	jobs             []string
@@ -501,7 +508,11 @@ func (b *builder) deriveCompileTaskName(jobName string, parts map[string]string)
 		ec := []string{}
 		if val := parts["extra_config"]; val != "" {
 			ec = strings.Split(val, "_")
-			ignore := []string{"Skpbench", "AbandonGpuContext", "PreAbandonGpuContext", "Valgrind", "ReleaseAndAbandonGpuContext", "CCPR", "FSAA", "FAAA", "FDAA", "NativeFonts", "GDI", "NoGPUThreads", "ProcDump", "DDL1", "DDL3", "T8888", "DDLTotal", "DDLRecord", "9x9", "BonusConfigs", "SkottieTracing", "SkottieWASM", "NonNVPR"}
+			ignore := []string{
+				"Skpbench", "AbandonGpuContext", "PreAbandonGpuContext", "Valgrind",
+				"ReleaseAndAbandonGpuContext", "CCPR", "FSAA", "FAAA", "FDAA", "NativeFonts", "GDI",
+				"NoGPUThreads", "ProcDump", "DDL1", "DDL3", "T8888", "DDLTotal", "DDLRecord", "9x9",
+				"BonusConfigs", "SkottieTracing", "SkottieWASM", "NonNVPR", "Mskp"}
 			keep := make([]string, 0, len(ec))
 			for _, part := range ec {
 				if !util.In(part, ignore) {
@@ -591,7 +602,7 @@ func (b *builder) defaultSwarmDimensions(parts map[string]string) []string {
 			"Mac10.14":   "Mac-10.14.3",
 			"Ubuntu18":   "Ubuntu-18.04",
 			"Win":        DEFAULT_OS_WIN,
-			"Win10":      "Windows-10-17763.557",
+			"Win10":      "Windows-10-18362",
 			"Win2016":    DEFAULT_OS_WIN,
 			"Win7":       "Windows-7-SP1",
 			"Win8":       "Windows-8.1-SP0",
@@ -601,8 +612,8 @@ func (b *builder) defaultSwarmDimensions(parts map[string]string) []string {
 			glog.Fatalf("Entry %q not found in OS mapping.", os)
 		}
 		if os == "Win10" && parts["model"] == "Golo" {
-			// ChOps-owned machines have Windows 10 v1709, but a slightly different version than Skolo.
-			d["os"] = "Windows-10-16299.309"
+			// ChOps-owned machines have Windows 10 v1709.
+			d["os"] = "Windows-10-16299"
 		}
 		if os == "Mac10.14" && parts["model"] == "VMware7.1" {
 			// ChOps VMs are at a newer version of MacOS.
@@ -626,7 +637,7 @@ func (b *builder) defaultSwarmDimensions(parts map[string]string) []string {
 			deviceInfo, ok := map[string][]string{
 				"AndroidOne":      {"sprout", "MOB30Q"},
 				"Chorizo":         {"chorizo", "1.30_109591"},
-				"GalaxyS6":        {"zerofltetmo", "NRD90M_G920TUVU5FQK1"},
+				"GalaxyS6":        {"zerofltetmo", "NRD90M_G920TUVS6FRC1"},
 				"GalaxyS7_G930FD": {"herolte", "R16NW_G930FXXS2ERH6"}, // This is Oreo.
 				"GalaxyS9":        {"starlte", "R16NW_G960FXXU2BRJ8"}, // This is Oreo.
 				"MotoG4":          {"athene", "NPJS25.93-14.7-8"},
@@ -933,6 +944,7 @@ func getIsolatedCIPDDeps(parts map[string]string) []string {
 	} else if e := parts["extra_config"]; strings.Contains(e, "Skpbench") {
 		// Skpbench only needs skps
 		deps = append(deps, ISOLATE_SKP_NAME)
+		deps = append(deps, ISOLATE_MSKP_NAME)
 	} else if util.In(o, rpiOS) {
 		deps = append(deps, ISOLATE_SKP_NAME)
 		deps = append(deps, ISOLATE_SVG_NAME)
@@ -1222,7 +1234,7 @@ func (b *builder) buildstats(name string, parts map[string]string, compileTaskNa
 	return name
 }
 
-// getParentRevision name returns the name of a compile task which builds
+// getParentRevisionName returns the name of a compile task which builds
 // against a "parent" revision.
 func getParentRevisionName(compileTaskName string, parts map[string]string) string {
 	if parts["extra_config"] == "" {
@@ -1567,6 +1579,7 @@ func (b *builder) process(name string) {
 	pkgs := []*specs.CipdPackage{}
 
 	if deps := getIsolatedCIPDDeps(parts); len(deps) == 0 {
+		// for desktop machines
 		pkgs = []*specs.CipdPackage{
 			b.MustGetCipdPackageFromAsset("skimage"),
 			b.MustGetCipdPackageFromAsset("skp"),

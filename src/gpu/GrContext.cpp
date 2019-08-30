@@ -233,13 +233,17 @@ int GrContext::maxTextureSize() const { return this->caps()->maxTextureSize(); }
 int GrContext::maxRenderTargetSize() const { return this->caps()->maxRenderTargetSize(); }
 
 bool GrContext::colorTypeSupportedAsImage(SkColorType colorType) const {
-    GrPixelConfig config = SkColorType2GrPixelConfig(colorType);
-    return this->caps()->isConfigTexturable(config);
+    GrBackendFormat format =
+            this->caps()->getDefaultBackendFormat(SkColorTypeToGrColorType(colorType),
+                                                  GrRenderable::kNo);
+    return format.isValid();
 }
 
 int GrContext::maxSurfaceSampleCountForColorType(SkColorType colorType) const {
-    GrPixelConfig config = SkColorType2GrPixelConfig(colorType);
-    return this->caps()->maxRenderTargetSampleCount(config);
+    GrBackendFormat format =
+            this->caps()->getDefaultBackendFormat(SkColorTypeToGrColorType(colorType),
+                                                  GrRenderable::kYes);
+    return this->caps()->maxRenderTargetSampleCount(format);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -343,7 +347,7 @@ GrBackendTexture GrContext::createBackendTexture(int width, int height,
 }
 
 GrBackendTexture GrContext::createBackendTexture(int width, int height,
-                                                 SkColorType colorType,
+                                                 SkColorType skColorType,
                                                  GrMipMapped mipMapped,
                                                  GrRenderable renderable,
                                                  GrProtected isProtected) {
@@ -355,8 +359,7 @@ GrBackendTexture GrContext::createBackendTexture(int width, int height,
         return GrBackendTexture();
     }
 
-    GrBackendFormat format =
-            this->caps()->getBackendFormatFromColorType(SkColorTypeToGrColorType(colorType));
+    const GrBackendFormat format = this->defaultBackendFormat(skColorType, renderable);
     if (!format.isValid()) {
         return GrBackendTexture();
     }
@@ -384,8 +387,7 @@ GrBackendTexture GrContext::createBackendTexture(const SkSurfaceCharacterization
         return {};
     }
 
-    const GrBackendFormat format =
-            caps->getBackendFormatFromColorType(SkColorTypeToGrColorType(c.colorType()));
+    const GrBackendFormat format = this->defaultBackendFormat(c.colorType(), GrRenderable::kYes);
     if (!format.isValid()) {
         return GrBackendTexture();
     }
@@ -404,8 +406,6 @@ GrBackendTexture GrContext::createBackendTexture(const SkSurfaceCharacterization
 
 GrBackendTexture GrContext::createBackendTexture(const SkSurfaceCharacterization& c,
                                                  const SkColor4f& color) {
-    const GrCaps* caps = this->caps();
-
     if (!this->asDirectContext() || !c.isValid()) {
         return GrBackendTexture();
     }
@@ -423,13 +423,12 @@ GrBackendTexture GrContext::createBackendTexture(const SkSurfaceCharacterization
         return {};
     }
 
-    const GrBackendFormat format =
-            caps->getBackendFormatFromColorType(SkColorTypeToGrColorType(c.colorType()));
+    const GrBackendFormat format = this->defaultBackendFormat(c.colorType(), GrRenderable::kYes);
     if (!format.isValid()) {
         return GrBackendTexture();
     }
 
-    if (!SkSurface_Gpu::Valid(caps, format)) {
+    if (!SkSurface_Gpu::Valid(this->caps(), format)) {
         return GrBackendTexture();
     }
 
@@ -466,7 +465,7 @@ GrBackendTexture GrContext::createBackendTexture(int width, int height,
 }
 
 GrBackendTexture GrContext::createBackendTexture(int width, int height,
-                                                 SkColorType colorType,
+                                                 SkColorType skColorType,
                                                  const SkColor4f& color,
                                                  GrMipMapped mipMapped,
                                                  GrRenderable renderable,
@@ -479,12 +478,13 @@ GrBackendTexture GrContext::createBackendTexture(int width, int height,
         return GrBackendTexture();
     }
 
-    GrColorType ct = SkColorTypeToGrColorType(colorType);
-    GrBackendFormat format = this->caps()->getBackendFormatFromColorType(ct);
+    GrBackendFormat format = this->defaultBackendFormat(skColorType, renderable);
     if (!format.isValid()) {
         return GrBackendTexture();
     }
-    SkColor4f swizzledColor = this->caps()->getOutputSwizzle(format, ct).applyTo(color);
+
+    GrColorType grColorType = SkColorTypeToGrColorType(skColorType);
+    SkColor4f swizzledColor = this->caps()->getOutputSwizzle(format, grColorType).applyTo(color);
 
     return this->createBackendTexture(width, height, format, swizzledColor, mipMapped, renderable,
                                       isProtected);
@@ -499,3 +499,31 @@ void GrContext::deleteBackendTexture(GrBackendTexture backendTex) {
     fGpu->deleteBackendTexture(backendTex);
 }
 
+#ifdef SK_ENABLE_DUMP_GPU
+#include "src/utils/SkJSONWriter.h"
+SkString GrContext::dump() const {
+    SkDynamicMemoryWStream stream;
+    SkJSONWriter writer(&stream, SkJSONWriter::Mode::kPretty);
+    writer.beginObject();
+
+    writer.appendString("backend", GrBackendApiToStr(this->backend()));
+
+    writer.appendName("caps");
+    this->caps()->dumpJSON(&writer);
+
+    writer.appendName("gpu");
+    this->fGpu->dumpJSON(&writer);
+
+    // Flush JSON to the memory stream
+    writer.endObject();
+    writer.flush();
+
+    // Null terminate the JSON data in the memory stream
+    stream.write8(0);
+
+    // Allocate a string big enough to hold all the data, then copy out of the stream
+    SkString result(stream.bytesWritten());
+    stream.copyToAndReset(result.writable_str());
+    return result;
+}
+#endif

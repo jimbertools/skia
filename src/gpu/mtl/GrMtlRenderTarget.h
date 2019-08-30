@@ -8,7 +8,7 @@
 #ifndef GrMtlRenderTarget_DEFINED
 #define GrMtlRenderTarget_DEFINED
 
-#include "include/gpu/GrRenderTarget.h"
+#include "src/gpu/GrRenderTarget.h"
 
 #include "include/gpu/GrBackendSurface.h"
 
@@ -20,6 +20,7 @@ class GrMtlRenderTarget: public GrRenderTarget {
 public:
     static sk_sp<GrMtlRenderTarget> MakeWrappedRenderTarget(GrMtlGpu*,
                                                             const GrSurfaceDesc&,
+                                                            int sampleCnt,
                                                             id<MTLTexture>);
 
     ~GrMtlRenderTarget() override;
@@ -27,8 +28,10 @@ public:
     // override of GrRenderTarget
     ResolveType getResolveType() const override {
         if (this->numSamples() > 1) {
+            SkASSERT(this->requiresManualMSAAResolve());
             return kCanResolve_ResolveType;
         }
+        SkASSERT(!this->requiresManualMSAAResolve());
         return kAutoResolves_ResolveType;
     }
 
@@ -46,6 +49,7 @@ public:
 protected:
     GrMtlRenderTarget(GrMtlGpu* gpu,
                       const GrSurfaceDesc& desc,
+                      int sampleCnt,
                       id<MTLTexture> colorTexture,
                       id<MTLTexture> resolveTexture);
 
@@ -79,6 +83,7 @@ private:
     enum Wrapped { kWrapped };
     GrMtlRenderTarget(GrMtlGpu* gpu,
                       const GrSurfaceDesc& desc,
+                      int sampleCnt,
                       id<MTLTexture> colorTexture,
                       id<MTLTexture> resolveTexture,
                       Wrapped);

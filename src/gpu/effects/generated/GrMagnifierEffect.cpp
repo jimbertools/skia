@@ -65,7 +65,7 @@ public:
                 args.fUniformHandler->getUniformCStr(xInvInsetVar),
                 args.fUniformHandler->getUniformCStr(yInvInsetVar));
         fragBuilder->codeAppendf(
-                "d.y), 1.0);\n}\n%s = texture(%s, mix(coord, zoom_coord, weight)).%s;\n",
+                "d.y), 1.0);\n}\n%s = sample(%s, mix(coord, zoom_coord, weight)).%s;\n",
                 args.fOutputColor,
                 fragBuilder->getProgramBuilder()->samplerVariable(args.fTexSamplers[0]),
                 fragBuilder->getProgramBuilder()->samplerSwizzle(args.fTexSamplers[0]).c_str());
@@ -115,15 +115,17 @@ private:
 
         {
             SkScalar y = bounds.y() * invH;
+            SkScalar hSign = 1.f;
             if (srcProxy.origin() != kTopLeft_GrSurfaceOrigin) {
-                y = 1.0f - bounds.height() * invH;
+                y = 1.0f - bounds.y() * invH;
+                hSign = -1.f;
             }
 
             pdman.set4f(boundsUniform,
                         bounds.x() * invW,
                         y,
                         SkIntToScalar(src.width()) / bounds.width(),
-                        SkIntToScalar(src.height()) / bounds.height());
+                        hSign * SkIntToScalar(src.height()) / bounds.height());
         }
     }
     UniformHandle boundsUniformVar;

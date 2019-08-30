@@ -7,6 +7,7 @@
 
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
+#include "include/core/SkData.h"
 #include "include/core/SkFontMetrics.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkStream.h"
@@ -296,7 +297,7 @@ static void unref_ft_library() {
 
 struct SkFaceRec {
     SkFaceRec* fNext;
-    std::unique_ptr<FT_FaceRec, SkFunctionWrapper<FT_Error, FT_FaceRec, FT_Done_Face>> fFace;
+    std::unique_ptr<FT_FaceRec, SkFunctionWrapper<decltype(FT_Done_Face), FT_Done_Face>> fFace;
     FT_StreamRec fFTStream;
     std::unique_ptr<SkStreamAsset> fSkStream;
     uint32_t fRefCnt;
@@ -528,7 +529,7 @@ protected:
     void generateFontMetrics(SkFontMetrics*) override;
 
 private:
-    using UnrefFTFace = SkFunctionWrapper<void, SkFaceRec, unref_ft_face>;
+    using UnrefFTFace = SkFunctionWrapper<decltype(unref_ft_face), unref_ft_face>;
     std::unique_ptr<SkFaceRec, UnrefFTFace> fFaceRec;
 
     FT_Face   fFace;  // Borrowed face from gFaceRecHead.
@@ -931,7 +932,7 @@ SkScalerContext_FreeType::SkScalerContext_FreeType(sk_sp<SkTypeface> typeface,
         fLoadGlyphFlags = loadFlags;
     }
 
-    using DoneFTSize = SkFunctionWrapper<FT_Error, skstd::remove_pointer_t<FT_Size>, FT_Done_Size>;
+    using DoneFTSize = SkFunctionWrapper<decltype(FT_Done_Size), FT_Done_Size>;
     std::unique_ptr<skstd::remove_pointer_t<FT_Size>, DoneFTSize> ftSize([this]() -> FT_Size {
         FT_Size size;
         FT_Error err = FT_New_Size(fFaceRec->fFace.get(), &size);
@@ -1772,6 +1773,30 @@ size_t SkTypeface_FreeType::onGetTableData(SkFontTableTag tag, size_t offset,
     }
 
     return size;
+}
+
+sk_sp<SkData> SkTypeface_FreeType::onCopyTableData(SkFontTableTag tag) const {
+    AutoFTAccess fta(this);
+    FT_Face face = fta.face();
+
+    FT_ULong tableLength = 0;
+    FT_Error error;
+
+    // When 'length' is 0 it is overwritten with the full table length; 'offset' is ignored.
+    error = FT_Load_Sfnt_Table(face, tag, 0, nullptr, &tableLength);
+    if (error) {
+        return nullptr;
+    }
+
+    sk_sp<SkData> data = SkData::MakeUninitialized(tableLength);
+    if (data) {
+        error = FT_Load_Sfnt_Table(face, tag, 0,
+                                   reinterpret_cast<FT_Byte*>(data->writable_data()), &tableLength);
+        if (error) {
+            data.reset();
+        }
+    }
+    return data;
 }
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -53,8 +53,19 @@ public:
         kA8_LiteralCoverage
     };
 
+    static constexpr GrColorType CoverageTypeToColorType(CoverageType coverageType) {
+        switch (coverageType) {
+            case CoverageType::kFP16_CoverageCount:
+                return GrColorType::kAlpha_F16;
+            case CoverageType::kA8_Multisample:
+            case CoverageType::kA8_LiteralCoverage:
+                return GrColorType::kAlpha_8;
+        }
+        SkUNREACHABLE;
+    }
+
     using LazyInstantiateAtlasCallback = std::function<sk_sp<GrTexture>(
-            GrResourceProvider*, GrPixelConfig, int sampleCount)>;
+            GrResourceProvider*, GrPixelConfig, const GrBackendFormat&, int sampleCount)>;
 
     static sk_sp<GrTextureProxy> MakeLazyAtlasProxy(
             const LazyInstantiateAtlasCallback&, CoverageType, const GrCaps&);
@@ -89,8 +100,8 @@ public:
     // 'backingTexture', if provided, is a renderable texture with which to instantiate our proxy.
     // If null then we will create a texture using the resource provider. The purpose of this param
     // is to provide a guaranteed way to recycle a stashed atlas texture from a previous flush.
-    sk_sp<GrRenderTargetContext> makeRenderTargetContext(GrOnFlushResourceProvider*,
-                                                         sk_sp<GrTexture> backingTexture = nullptr);
+    std::unique_ptr<GrRenderTargetContext> makeRenderTargetContext(
+            GrOnFlushResourceProvider*, sk_sp<GrTexture> backingTexture = nullptr);
 
 private:
     class Node;

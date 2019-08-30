@@ -19,11 +19,10 @@
 #include "src/gpu/ops/GrMeshDrawOp.h"
 
 class GrGpu;
-class GrGpuCommandBuffer;
-class GrGpuRTCommandBuffer;
+class GrOpsRenderPass;
 class GrResourceProvider;
 
-/** Tracks the state across all the GrOps (really just the GrDrawOps) in a GrOpList flush. */
+/** Tracks the state across all the GrOps (really just the GrDrawOps) in a GrOpsTask flush. */
 class GrOpFlushState final : public GrDeferredUploadTarget, public GrMeshDrawOp::Target {
 public:
     // vertexSpace and indexSpace may either be null or an alloation of size
@@ -46,10 +45,8 @@ public:
             GrPipeline::InputFlags = GrPipeline::InputFlags::kNone,
             const GrUserStencilSettings* = &GrUserStencilSettings::kUnused);
 
-    GrGpuCommandBuffer* commandBuffer() { return fCommandBuffer; }
-    // Helper function used by Ops that are only called via RenderTargetOpLists
-    GrGpuRTCommandBuffer* rtCommandBuffer();
-    void setCommandBuffer(GrGpuCommandBuffer* buffer) { fCommandBuffer = buffer; }
+    GrOpsRenderPass* opsRenderPass() { return fOpsRenderPass; }
+    void setOpsRenderPass(GrOpsRenderPass* renderPass) { fOpsRenderPass = renderPass; }
 
     GrGpu* gpu() { return fGpu; }
 
@@ -113,9 +110,9 @@ public:
 
     GrDeinstantiateProxyTracker* deinstantiateProxyTracker() { return &fDeinstantiateProxyTracker; }
 
-private:
     /** GrMeshDrawOp::Target override. */
     SkArenaAlloc* allocator() override { return &fArena; }
+private:
 
     struct InlineUpload {
         InlineUpload(GrDeferredTextureUploadFn&& upload, GrDeferredUploadToken token)
@@ -161,7 +158,7 @@ private:
     GrGpu* fGpu;
     GrResourceProvider* fResourceProvider;
     GrTokenTracker* fTokenTracker;
-    GrGpuCommandBuffer* fCommandBuffer = nullptr;
+    GrOpsRenderPass* fOpsRenderPass = nullptr;
 
     // Variables that are used to track where we are in lists as ops are executed
     SkArenaAllocList<Draw>::Iter fCurrDraw;
