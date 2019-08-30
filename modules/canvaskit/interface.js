@@ -68,7 +68,8 @@ CanvasKit.onRuntimeInitialized = function() {
 
     var options = new CanvasKit.CodecOptions();
     options.frameindex(frame);
-    options.priorframe(0);
+    options.priorframe(frame-1);
+
     var result = this._getPixels(imageInfo, pPtr, rowBytes, options);
     if (result != CanvasKit.CodecResult.kSuccess) {
       SkDebug("Could not read pixels with the given inputs " + result);
@@ -205,6 +206,20 @@ CanvasKit.onRuntimeInitialized = function() {
       0, 0,  1,
     ];
   };
+
+  CanvasKit.SkPath.prototype.getBounds = function() {
+    return this._getBounds()
+  }
+
+  CanvasKit.SkPath.prototype.width = function() {
+    var bounds = this.getBounds();
+    return bounds.fRight - bounds.fLeft;
+  }
+
+  CanvasKit.SkPath.prototype.height = function() {
+    var bounds = this.getBounds();
+    return bounds.fBottom - bounds.fTop;
+  }
 
   CanvasKit.SkPath.prototype.addArc = function(oval, startAngle, sweepAngle) {
     // see arc() for the HTMLCanvas version
@@ -465,6 +480,7 @@ CanvasKit.onRuntimeInitialized = function() {
     return vert;
   }
 
+
   CanvasKit.SkImage.prototype.encodeToData = function() {
     if (!arguments.length) {
       return this._encodeToData();
@@ -584,6 +600,10 @@ CanvasKit.onRuntimeInitialized = function() {
       CanvasKit._free(colorPtr);
     }
 
+  }
+
+  CanvasKit.SkCanvas.prototype.setTransform = function(a, b, c, d, e, f) {
+    this.setMatrix([a, c, e, b, d, f, 0, 0, 1])
   }
 
   // str can be either a text string or a ShapedText object

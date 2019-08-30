@@ -765,6 +765,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .constructor<int , int , const SkSurfaceProps* >()
         .function("clear", &SkCanvas::clear)
         .function("clipPath", select_overload<void (const SkPath&, SkClipOp, bool)>(&SkCanvas::clipPath))
+        .function("clipPath", select_overload<void (const SkPath&, bool)>(&SkCanvas::clipPath))
         .function("clipRect", select_overload<void (const SkRect&, SkClipOp, bool)>(&SkCanvas::clipRect))
         .function("concat", optional_override([](SkCanvas& self, const SimpleMatrix& m) {
             self.concat(toSkMatrix(m));
@@ -846,6 +847,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("scale", &SkCanvas::scale)
         .function("skew", &SkCanvas::skew)
         .function("translate", &SkCanvas::translate)
+        .function("setMatrix", &SkCanvas::setMatrix)
         .function("_writePixels", optional_override([](SkCanvas& self, SimpleImageInfo di,
                                                        uintptr_t /* uint8_t* */ pPtr,
                                                        size_t srcRowBytes, int dstX, int dstY) {
@@ -934,6 +936,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .smart_ptr<sk_sp<SkImage>>("sk_sp<SkImage>")
         .function("height", &SkImage::height)
         .function("width", &SkImage::width)
+        .function("makeSubset", &SkImage::makeSubset)
         .function("_encodeToData", select_overload<sk_sp<SkData>()const>(&SkImage::encodeToData))
         .function("_encodeToDataWithFormat", select_overload<sk_sp<SkData>(SkEncodedImageFormat encodedImageFormat, int quality)const>(&SkImage::encodeToData))
             // Allow localMatrix to be optional, so we have 2 declarations of these shaders
@@ -948,7 +951,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
 
             return self->makeShader(tx, ty, &localMatrix);
         }), allow_raw_pointers())
-        .function("_readPixels", optional_override([](sk_sp<SkImage> self,
+            .function("_readPixels", optional_override([](sk_sp<SkImage> self,
                                  SimpleImageInfo sii, uintptr_t /* uint8_t*  */ pPtr,
                                  size_t dstRowBytes, int srcX, int srcY)->bool {
                                     // See comment above for uintptr_t explanation
@@ -982,6 +985,9 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("setColorf", optional_override([](SkPaint& self,
                                                     float r, float g, float b, float a) {
             self.setColor({r, g, b, a});
+        }))
+        .function("setAlphaf", optional_override([](SkPaint& self, float alpha) {
+            self.setAlphaf(alpha);
         }))
         .function("setFilterQuality", &SkPaint::setFilterQuality)
         .function("setMaskFilter", &SkPaint::setMaskFilter)
@@ -1041,7 +1047,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
 
         .function("setFillType", &SkPath::setFillType)
         .function("getFillType", &SkPath::getFillType)
-        .function("getBounds", &SkPath::getBounds)
+        .function("_getBounds", &SkPath::getBounds)
         .function("computeTightBounds", &SkPath::computeTightBounds)
         .function("equals", &Equals)
         .function("copy", &CopyPath)
