@@ -991,8 +991,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("setStrokeJoin", &SkPaint::setStrokeJoin)
         .function("setStrokeMiter", &SkPaint::setStrokeMiter)
         .function("setStrokeWidth", &SkPaint::setStrokeWidth)
-        .function("setStyle", &SkPaint::setStyle)
-        .function("setDrawLooper",&SkPaint::setDrawLooper);
+        .function("setStyle", &SkPaint::setStyle);
 
     class_<SkPathEffect>("SkPathEffect")
         .smart_ptr<sk_sp<SkPathEffect>>("sk_sp<SkPathEffect>");
