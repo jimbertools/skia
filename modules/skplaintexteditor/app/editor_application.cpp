@@ -8,9 +8,9 @@
 #include "include/core/SkSurface.h"
 #include "include/core/SkTime.h"
 
-#include "tools/ModifierKey.h"
 #include "tools/sk_app/Application.h"
 #include "tools/sk_app/Window.h"
+#include "tools/skui/ModifierKey.h"
 
 #include "modules/skplaintexteditor/include/editor.h"
 
@@ -23,9 +23,9 @@ using SkPlainTextEditor::Editor;
 using SkPlainTextEditor::StringView;
 
 #ifdef SK_EDITOR_DEBUG_OUT
-static const char* key_name(sk_app::Window::Key k) {
+static const char* key_name(skui::Key k) {
     switch (k) {
-        #define M(X) case sk_app::Window::Key::k ## X: return #X
+        #define M(X) case skui::Key::k ## X: return #X
         M(NONE); M(LeftSoftKey); M(RightSoftKey); M(Home); M(Back); M(Send); M(End); M(0); M(1);
         M(2); M(3); M(4); M(5); M(6); M(7); M(8); M(9); M(Star); M(Hash); M(Up); M(Down); M(Left);
         M(Right); M(Tab); M(PageUp); M(PageDown); M(Delete); M(Escape); M(Shift); M(Ctrl);
@@ -36,15 +36,15 @@ static const char* key_name(sk_app::Window::Key k) {
     }
 }
 
-static SkString modifiers_desc(ModifierKey m) {
+static SkString modifiers_desc(skui::ModifierKey m) {
     SkString s;
-    #define M(X) if (m & ModifierKey::k ## X ##) { s.append(" {" #X "}"); }
+    #define M(X) if (m & skui::ModifierKey::k ## X ##) { s.append(" {" #X "}"); }
     M(Shift) M(Control) M(Option) M(Command) M(FirstPress)
     #undef M
     return s;
 }
 
-static void debug_on_char(SkUnichar c, ModifierKey modifiers) {
+static void debug_on_char(SkUnichar c, skui::ModifierKey modifiers) {
     SkString m = modifiers_desc(modifiers);
     if ((unsigned)c < 0x100) {
         SkDebugf("char: %c (0x%02X)%s\n", (char)(c & 0xFF), (unsigned)c, m.c_str());
@@ -53,19 +53,19 @@ static void debug_on_char(SkUnichar c, ModifierKey modifiers) {
     }
 }
 
-static void debug_on_key(sk_app::Window::Key key, InputState, ModifierKey modi) {
+static void debug_on_key(skui::Key key, skui::InputState, skui::ModifierKey modi) {
     SkDebugf("key: %s%s\n", key_name(key), modifiers_desc(modi).c_str());
 }
 #endif  // SK_EDITOR_DEBUG_OUT
 
-static Editor::Movement convert(sk_app::Window::Key key) {
+static Editor::Movement convert(skui::Key key) {
     switch (key) {
-        case sk_app::Window::Key::kLeft:  return Editor::Movement::kLeft;
-        case sk_app::Window::Key::kRight: return Editor::Movement::kRight;
-        case sk_app::Window::Key::kUp:    return Editor::Movement::kUp;
-        case sk_app::Window::Key::kDown:  return Editor::Movement::kDown;
-        case sk_app::Window::Key::kHome:  return Editor::Movement::kHome;
-        case sk_app::Window::Key::kEnd:   return Editor::Movement::kEnd;
+        case skui::Key::kLeft:  return Editor::Movement::kLeft;
+        case skui::Key::kRight: return Editor::Movement::kRight;
+        case skui::Key::kUp:    return Editor::Movement::kUp;
+        case skui::Key::kDown:  return Editor::Movement::kDown;
+        case skui::Key::kHome:  return Editor::Movement::kHome;
+        case skui::Key::kEnd:   return Editor::Movement::kEnd;
         default: return Editor::Movement::kNowhere;
     }
 }
@@ -77,6 +77,14 @@ struct Timer {
     Timer(const char* desc = "") : fTime(SkTime::GetNSecs()), fDesc(desc) {}
     ~Timer() { SkDebugf("%s: %5d μs\n", fDesc, (int)((SkTime::GetNSecs() - fTime) * 1e-3)); }
 };
+
+static constexpr float kFontSize = 18;
+static const char* kTypefaces[3] = {"sans-serif", "serif", "monospace"};
+static constexpr size_t kTypefaceCount = SK_ARRAY_COUNT(kTypefaces);
+
+static constexpr SkFontStyle::Weight kFontWeight = SkFontStyle::kNormal_Weight;
+static constexpr SkFontStyle::Width  kFontWidth  = SkFontStyle::kNormal_Width;
+static constexpr SkFontStyle::Slant  kFontSlant  = SkFontStyle::kUpright_Slant;
 
 struct EditorLayer : public sk_app::Window::Layer {
     SkString fPath;
@@ -90,9 +98,17 @@ struct EditorLayer : public sk_app::Window::Layer {
     int fWidth = 0;  // window width
     int fHeight = 0;  // window height
     int fMargin = 10;
+    size_t fTypefaceIndex = 0;
+    float fFontSize = kFontSize;
     bool fShiftDown = false;
     bool fBlink = false;
     bool fMouseDown = false;
+
+    void setFont() {
+        fEditor.setFont(SkFont(SkTypeface::MakeFromName(kTypefaces[fTypefaceIndex],
+                               SkFontStyle(kFontWeight, kFontWidth, kFontSlant)), fFontSize));
+    }
+
 
     void loadFile(const char* path) {
         if (sk_sp<SkData> data = SkData::MakeFromFileName(path)) {
@@ -153,31 +169,31 @@ struct EditorLayer : public sk_app::Window::Layer {
 
     void inval() { if (fParent) { fParent->inval(); } }
 
-    bool onMouseWheel(float delta, ModifierKey) override {
+    bool onMouseWheel(float delta, skui::ModifierKey) override {
         this->scroll(-(int)(delta * fEditor.font().getSpacing()));
         return true;
     }
 
-    bool onMouse(int x, int y, InputState state, ModifierKey modifiers) override {
-        bool mouseDown = InputState::kDown == state;
+    bool onMouse(int x, int y, skui::InputState state, skui::ModifierKey modifiers) override {
+        bool mouseDown = skui::InputState::kDown == state;
         if (mouseDown) {
             fMouseDown = true;
-        } else if (InputState::kUp == state) {
+        } else if (skui::InputState::kUp == state) {
             fMouseDown = false;
         }
-        bool shiftOrDrag = skstd::Any(modifiers & ModifierKey::kShift) || !mouseDown;
+        bool shiftOrDrag = skstd::Any(modifiers & skui::ModifierKey::kShift) || !mouseDown;
         if (fMouseDown) {
             return this->move(fEditor.getPosition({x - fMargin, y + fPos - fMargin}), shiftOrDrag);
         }
         return false;
     }
 
-    bool onChar(SkUnichar c, ModifierKey modi) override {
+    bool onChar(SkUnichar c, skui::ModifierKey modi) override {
         using skstd::Any;
-        modi &= ~ModifierKey::kFirstPress;
-        if (!Any(modi & (ModifierKey::kControl |
-                         ModifierKey::kOption  |
-                         ModifierKey::kCommand))) {
+        modi &= ~skui::ModifierKey::kFirstPress;
+        if (!Any(modi & (skui::ModifierKey::kControl |
+                         skui::ModifierKey::kOption  |
+                         skui::ModifierKey::kCommand))) {
             if (((unsigned)c < 0x7F && (unsigned)c >= 0x20) || c == '\n') {
                 char ch = (char)c;
                 fEditor.insert(fTextPos, &ch, 1);
@@ -187,8 +203,8 @@ struct EditorLayer : public sk_app::Window::Layer {
                 return this->moveCursor(Editor::Movement::kRight);
             }
         }
-        static constexpr ModifierKey kCommandOrControl = ModifierKey::kCommand |
-                                                         ModifierKey::kControl;
+        static constexpr skui::ModifierKey kCommandOrControl = skui::ModifierKey::kCommand |
+                                                               skui::ModifierKey::kControl;
         if (Any(modi & kCommandOrControl) && !Any(modi & ~kCommandOrControl)) {
             switch (c) {
                 case 'p':
@@ -232,20 +248,20 @@ struct EditorLayer : public sk_app::Window::Layer {
                         return true;
                     }
                     return false;
+                case '0':
+                    fTypefaceIndex = (fTypefaceIndex + 1) % kTypefaceCount;
+                    this->setFont();
+                    return true;
                 case '=':
                 case '+':
-                    {
-                        float s = fEditor.font().getSize() + 1;
-                        fEditor.setFont(fEditor.font().makeWithSize(s));
-                    }
+                    fFontSize = fFontSize + 1;
+                    this->setFont();
                     return true;
                 case '-':
                 case '_':
-                    {
-                        float s = fEditor.font().getSize() - 1;
-                        if (s > 0) {
-                            fEditor.setFont(fEditor.font().makeWithSize(s));
-                        }
+                    if (fFontSize > 1) {
+                        fFontSize = fFontSize - 1;
+                        this->setFont();
                     }
             }
         }
@@ -283,33 +299,33 @@ struct EditorLayer : public sk_app::Window::Layer {
         return true;
     }
 
-    bool onKey(sk_app::Window::Key key,
-               InputState state,
-               ModifierKey modifiers) override {
-        if (state != InputState::kDown) {
+    bool onKey(skui::Key key,
+               skui::InputState state,
+               skui::ModifierKey modifiers) override {
+        if (state != skui::InputState::kDown) {
             return false;  // ignore keyup
         }
         // ignore other modifiers.
         using skstd::Any;
-        ModifierKey ctrlAltCmd = modifiers & (ModifierKey::kControl |
-                                              ModifierKey::kOption  |
-                                              ModifierKey::kCommand);
-        bool shift = Any(modifiers & (ModifierKey::kShift));
+        skui::ModifierKey ctrlAltCmd = modifiers & (skui::ModifierKey::kControl |
+                                              skui::ModifierKey::kOption  |
+                                              skui::ModifierKey::kCommand);
+        bool shift = Any(modifiers & (skui::ModifierKey::kShift));
         if (!Any(ctrlAltCmd)) {
             // no modifiers
             switch (key) {
-                case sk_app::Window::Key::kPageDown:
+                case skui::Key::kPageDown:
                     return this->scroll(fHeight * 4 / 5);
-                case sk_app::Window::Key::kPageUp:
+                case skui::Key::kPageUp:
                     return this->scroll(-fHeight * 4 / 5);
-                case sk_app::Window::Key::kLeft:
-                case sk_app::Window::Key::kRight:
-                case sk_app::Window::Key::kUp:
-                case sk_app::Window::Key::kDown:
-                case sk_app::Window::Key::kHome:
-                case sk_app::Window::Key::kEnd:
+                case skui::Key::kLeft:
+                case skui::Key::kRight:
+                case skui::Key::kUp:
+                case skui::Key::kDown:
+                case skui::Key::kHome:
+                case skui::Key::kEnd:
                     return this->moveCursor(convert(key), shift);
-                case sk_app::Window::Key::kDelete:
+                case skui::Key::kDelete:
                     if (fMarkPos != Editor::TextPosition()) {
                         (void)this->move(fEditor.remove(fMarkPos, fTextPos), false);
                     } else {
@@ -318,7 +334,7 @@ struct EditorLayer : public sk_app::Window::Layer {
                     }
                     this->inval();
                     return true;
-                case sk_app::Window::Key::kBack:
+                case skui::Key::kBack:
                     if (fMarkPos != Editor::TextPosition()) {
                         (void)this->move(fEditor.remove(fMarkPos, fTextPos), false);
                     } else {
@@ -327,16 +343,16 @@ struct EditorLayer : public sk_app::Window::Layer {
                     }
                     this->inval();
                     return true;
-                case sk_app::Window::Key::kOK:
+                case skui::Key::kOK:
                     return this->onChar('\n', modifiers);
                 default:
                     break;
             }
-        } else if (skstd::Any(ctrlAltCmd & (ModifierKey::kControl | ModifierKey::kCommand))) {
+        } else if (skstd::Any(ctrlAltCmd & (skui::ModifierKey::kControl | skui::ModifierKey::kCommand))) {
             switch (key) {
-                case sk_app::Window::Key::kLeft:
+                case skui::Key::kLeft:
                     return this->moveCursor(Editor::Movement::kWordLeft, shift);
-                case sk_app::Window::Key::kRight:
+                case skui::Key::kRight:
                     return this->moveCursor(Editor::Movement::kWordRight, shift);
                 default:
                     break;
@@ -348,13 +364,6 @@ struct EditorLayer : public sk_app::Window::Layer {
         return false;
     }
 };
-
-static constexpr float kFontSize = 18;
-// static constexpr char kTypefaceName[] = "monospace";
-static constexpr char kTypefaceName[] = "sans-serif";
-static constexpr SkFontStyle::Weight kFontWeight = SkFontStyle::kNormal_Weight;
-static constexpr SkFontStyle::Width  kFontWidth  = SkFontStyle::kNormal_Width;
-static constexpr SkFontStyle::Slant  kFontSlant  = SkFontStyle::kUpright_Slant;
 
 //static constexpr sk_app::Window::BackendType kBackendType = sk_app::Window::kRaster_BackendType;
 static constexpr sk_app::Window::BackendType kBackendType = sk_app::Window::kNativeGL_BackendType;
@@ -369,9 +378,8 @@ struct EditorApplication : public sk_app::Application {
     bool init(const char* path) {
         fWindow->attach(kBackendType);
 
-        fLayer.fEditor.setFont(SkFont(SkTypeface::MakeFromName(kTypefaceName,
-                               SkFontStyle(kFontWeight, kFontWidth, kFontSlant)), kFontSize));
         fLayer.loadFile(path);
+        fLayer.setFont();
 
         fWindow->pushLayer(&fLayer);
         fWindow->setTitle(SkStringPrintf("Editor: \"%s\"", fLayer.fPath.c_str()).c_str());

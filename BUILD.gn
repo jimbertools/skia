@@ -1366,9 +1366,28 @@ if (skia_enable_tools) {
         testonly = true
       }
 
-      bundle_data("${app_name}_bundle_symbols") {
+      action("${app_name}_dsymutil") {
         public_deps = [
           ":${app_name}_generate_executable",
+        ]
+        sources = [
+          "$gen_path/$app_name",
+        ]
+        script = "//gn/call.py"
+        args = [
+          "dsymutil",
+          "$gen_path/$app_name",
+        ]
+        outputs = [
+          "$gen_path/${app_name}.dSYM",
+        ]
+        testonly = true
+        pool = "//gn/toolchain:dsymutil_pool($default_toolchain)"
+      }
+
+      bundle_data("${app_name}_bundle_symbols") {
+        public_deps = [
+          ":${app_name}_dsymutil",
         ]
         sources = [
           "$gen_path/${app_name}.dSYM",
@@ -2375,11 +2394,12 @@ if (skia_enable_tools) {
       ]
     } else if (is_ios) {
       sources += [
-        "tools/sk_app/ios/GLWindowContext_ios.cpp",
-        "tools/sk_app/ios/RasterWindowContext_ios.cpp",
-        "tools/sk_app/ios/Window_ios.cpp",
-        "tools/sk_app/ios/main_ios.cpp",
+        "tools/sk_app/ios/GLWindowContext_ios.mm",
+        "tools/sk_app/ios/RasterWindowContext_ios.mm",
+        "tools/sk_app/ios/Window_ios.mm",
+        "tools/sk_app/ios/main_ios.mm",
       ]
+      libs += [ "QuartzCore.framework" ]
     }
 
     if (skia_use_vulkan) {
@@ -2401,8 +2421,9 @@ if (skia_enable_tools) {
       sources += [ "tools/sk_app/MetalWindowContext.mm" ]
       if (is_mac) {
         sources += [ "tools/sk_app/mac/MetalWindowContext_mac.mm" ]
+      } else if (is_ios) {
+        sources += [ "tools/sk_app/ios/MetalWindowContext_ios.mm" ]
       }
-      libs += [ "MetalKit.framework" ]
     }
 
     deps = [
@@ -2410,8 +2431,6 @@ if (skia_enable_tools) {
     ]
     if (is_android) {
       deps += [ "//third_party/native_app_glue" ]
-    } else if (is_ios) {
-      deps += [ "//third_party/libsdl" ]
     }
     if (skia_use_angle) {
       deps += [ "//third_party/angle2" ]
