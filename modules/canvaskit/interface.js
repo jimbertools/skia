@@ -603,7 +603,7 @@ CanvasKit.onRuntimeInitialized = function() {
   }
 
   CanvasKit.SkCanvas.prototype.setTransform = function(a, b, c, d, e, f) {
-    this.setMatrix([a, c, e, b, d, f, 0, 0, 1])
+    this._setMatrix([a, c, e, b, d, f, 0, 0, 1])
   }
 
   // str can be either a text string or a ShapedText object
