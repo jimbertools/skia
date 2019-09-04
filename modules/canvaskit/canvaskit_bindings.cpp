@@ -847,7 +847,6 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("scale", &SkCanvas::scale)
         .function("skew", &SkCanvas::skew)
         .function("translate", &SkCanvas::translate)
-        .function("setMatrix", &SkCanvas::setMatrix)
         .function("_writePixels", optional_override([](SkCanvas& self, SimpleImageInfo di,
                                                        uintptr_t /* uint8_t* */ pPtr,
                                                        size_t srcRowBytes, int dstX, int dstY) {
@@ -856,7 +855,9 @@ EMSCRIPTEN_BINDINGS(Skia) {
 
             return self.writePixels(dstInfo, pixels, srcRowBytes, dstX, dstY);
         }))
-        ;
+        .function("_setMatrix", optional_override([](SkCanvas& self, SimpleMatrix& simpleMatrix) {
+            self.setMatrix(toSkMatrix(simpleMatrix));
+        }));
 
     class_<SkData>("SkData")
         .smart_ptr<sk_sp<SkData>>("sk_sp<SkData>>")
