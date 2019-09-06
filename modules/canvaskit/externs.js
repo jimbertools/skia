@@ -39,6 +39,7 @@ var CanvasKit = {
 	MakeGrContext: function() {},
 	/** @return {CanvasKit.SkImage} */
 	MakeImageFromEncoded: function() {},
+	MakeSkDataFromEncoded: function() {},
 	/** @return {LinearCanvasGradient} */
 	MakeLinearGradientShader: function() {},
 	MakeOnScreenGLSurface: function() {},
@@ -96,6 +97,17 @@ var CanvasKit = {
 	ShapedText: {
 		// public API (from C++ bindings)
 		getBounds: function() {},
+	},
+
+	SkCodec: {
+		MakeFromStream: function() {},
+		_readPixels: function() {}
+
+	},
+
+	SkImageGenerator: {
+		_readPixels: function() {},
+		_getPixels: function() {}
 	},
 
 	SkCanvas: {
@@ -211,6 +223,10 @@ var CanvasKit = {
 
 		//private API
 		delete: function() {},
+	},
+
+	SkData: {
+		MakeFromMalloc: function() {}
 	},
 
 	SkPath: {
@@ -539,6 +555,13 @@ CanvasKit.SkSurface.prototype.dispose = function() {};
 CanvasKit.SkSurface.prototype.flush = function() {};
 CanvasKit.SkSurface.prototype.requestAnimationFrame = function() {};
 CanvasKit.SkSurface.prototype.captureFrameAsSkPicture = function() {};
+
+CanvasKit.SkCodec.prototype.readPixels = function() {};
+CanvasKit.SkCodec.prototype.width = function() {};
+CanvasKit.SkCodec.prototype.height = function() {};
+
+CanvasKit.SkImageGenerator.prototype.readPixels = function() {};
+CanvasKit.SkImageGenerator.prototype._getPixels = function() {};
 
 /** @return {CanvasKit.SkVertices} */
 CanvasKit.SkVertices.prototype.applyBones = function() {};
