@@ -926,7 +926,8 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("setSize", &SkFont::setSize)
         .function("setSkewX", &SkFont::setSkewX)
         .function("setTypeface", &SkFont::setTypeface, allow_raw_pointers())
-        .function("setEmbolden", &SkFont::setEmbolden);
+        .function("setEmbolden", &SkFont::setEmbolden)
+        .function("setHinting", &SkFont::setHinting);
 
     class_<ShapedText>("ShapedText")
         .constructor<ShapedTextOpts>()
@@ -1309,6 +1310,11 @@ EMSCRIPTEN_BINDINGS(Skia) {
             return self.fPriorFrame;
         }));
     
+    enum_<SkFontHinting>("FontHinting")
+        .value("kNone", SkFontHinting::kNone)
+        .value("kSlight", SkFontHinting::kSlight)
+        .value("kNormal", SkFontHinting::kNormal)
+        .value("kFull", SkFontHinting::kFull);
 
     enum_<SkImage::CachingHint>("CachingHint") 
         .value("kAllow_CachingHint",   SkImage::kAllow_CachingHint)
