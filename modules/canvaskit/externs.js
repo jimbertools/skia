@@ -61,6 +61,9 @@ var CanvasKit = {
 	getSkDataBytes: function() {},
 	multiplyByAlpha: function() {},
 	setCurrentContext: function() {},
+	UintColor: function() {},
+	MakeRasterImageFromEncoded: function() {},
+	_decodeImageToRaster: function() {},
 
 	// private API (i.e. things declared in the bindings that we use
 	// in the pre-js file)
@@ -145,12 +148,14 @@ var CanvasKit = {
 		scale: function() {},
 		skew: function() {},
 		translate: function() {},
-
+		setTransform: function() {},
 		// private API
 		_drawAtlas: function() {},
 		_drawSimpleText: function() {},
 		_readPixels: function() {},
 		_writePixels: function() {},
+		_setMatrix: function() {},
+
 		delete: function() {},
 	},
 
@@ -182,6 +187,7 @@ var CanvasKit = {
 		// public API (from C++ bindings)
 		height: function() {},
 		width: function() {},
+		makeSubset: function() {},
 		// private API
 		_encodeToData: function() {},
 		_encodeToDataWithFormat: function() {},
