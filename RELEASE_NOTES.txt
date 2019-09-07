@@ -4,6 +4,12 @@ This file includes a list of high level updates for each milestone release.
 
 -----
 
+Milestone 79
+
+  * Make the size of program/pipeline caches configurable via
+    GrContextOptions::fRuntimeProgramCacheSize
+    https://review.skia.org/239756
+
 Milestone 78
 
   * Added RELEASE_NOTES.txt file
@@ -77,3 +83,17 @@ Milestone 78
 
   * Add SkColor4f variant to experimental_DrawEdgeAAQuad for SkiaRenderer.
     https://review.skia.org/237492
+
+  * Deprecated maxCount resource cache limit for Ganesh.
+    This hasn't been relevant for a long time.
+
+  * Changed GrContextOptions' fDisallowGLSLBinaryCaching to fShaderCacheStrategy,
+    and allow caching SkSL.
+    https://review.skia.org/238856
+
+  * Added kRG_88_SkColorType. This is intended to help support YUV uses case (e.g., NV12).
+    As such, it the addition is focused on allowing creation of SkPixmaps and SkImages and not
+    SkSurfaces (i.e., who wants to render to RG?)
+
+  * Add GrContext::precompileShader to allow up-front compilation of previously-cached shaders.
+    https://review.skia.org/239438

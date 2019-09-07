@@ -139,18 +139,16 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(DeferredProxyTest, reporter, ctxInfo) {
                                 if (SkBackingFit::kApprox == fit) {
                                     tex = resourceProvider->createApproxTexture(
                                             desc, format, GrRenderable::kYes, numSamples,
-                                            GrProtected::kNo,
-                                            GrResourceProvider::Flags::kNoPendingIO);
+                                            GrProtected::kNo);
                                 } else {
                                     tex = resourceProvider->createTexture(
                                             desc, format, GrRenderable::kYes, numSamples, budgeted,
-                                            GrProtected::kNo,
-                                            GrResourceProvider::Flags::kNoPendingIO);
+                                            GrProtected::kNo);
                                 }
 
                                 sk_sp<GrTextureProxy> proxy = proxyProvider->createProxy(
-                                        format, desc, GrRenderable::kYes, numSamples, origin, fit,
-                                        budgeted, GrProtected::kNo);
+                                        format, desc, GrRenderable::kYes, numSamples, origin,
+                                        GrMipMapped::kNo, fit, budgeted, GrProtected::kNo);
                                 REPORTER_ASSERT(reporter, SkToBool(tex) == SkToBool(proxy));
                                 if (proxy) {
                                     REPORTER_ASSERT(reporter, proxy->asRenderTargetProxy());
@@ -178,18 +176,16 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(DeferredProxyTest, reporter, ctxInfo) {
                                 if (SkBackingFit::kApprox == fit) {
                                     tex = resourceProvider->createApproxTexture(
                                             desc, format, GrRenderable::kNo, numSamples,
-                                            GrProtected::kNo,
-                                            GrResourceProvider::Flags::kNoPendingIO);
+                                            GrProtected::kNo);
                                 } else {
                                     tex = resourceProvider->createTexture(
                                             desc, format, GrRenderable::kNo, numSamples, budgeted,
-                                            GrProtected::kNo,
-                                            GrResourceProvider::Flags::kNoPendingIO);
+                                            GrProtected::kNo);
                                 }
 
                                 sk_sp<GrTextureProxy> proxy(proxyProvider->createProxy(
-                                        format, desc, GrRenderable::kNo, numSamples, origin, fit,
-                                        budgeted, GrProtected::kNo));
+                                        format, desc, GrRenderable::kNo, numSamples, origin,
+                                        GrMipMapped::kNo, fit, budgeted, GrProtected::kNo));
                                 REPORTER_ASSERT(reporter, SkToBool(tex) == SkToBool(proxy));
                                 if (proxy) {
                                     // This forces the proxy to compute and cache its
@@ -390,8 +386,8 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ZeroSizedProxyTest, reporter, ctxInfo) {
                                 renderable);
 
                     sk_sp<GrTextureProxy> proxy = provider->createProxy(
-                            format, desc, renderable, 1, kBottomLeft_GrSurfaceOrigin, fit,
-                            SkBudgeted::kNo, GrProtected::kNo);
+                            format, desc, renderable, 1, kBottomLeft_GrSurfaceOrigin,
+                            GrMipMapped::kNo, fit, SkBudgeted::kNo, GrProtected::kNo);
                     REPORTER_ASSERT(reporter, !proxy);
                 }
             }

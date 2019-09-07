@@ -23,24 +23,6 @@ class GrVkRenderPass;
 class GrVkRenderTarget;
 class GrVkSecondaryCommandBuffer;
 
-/** Base class for tasks executed on primary command buffer, between secondary command buffers. */
-class GrVkPrimaryCommandBufferTask {
-public:
-    virtual ~GrVkPrimaryCommandBufferTask();
-
-    struct Args {
-        GrGpu* fGpu;
-        GrSurface* fSurface;
-    };
-
-    virtual void execute(const Args& args) = 0;
-
-protected:
-    GrVkPrimaryCommandBufferTask();
-    GrVkPrimaryCommandBufferTask(const GrVkPrimaryCommandBufferTask&) = delete;
-    GrVkPrimaryCommandBufferTask& operator=(const GrVkPrimaryCommandBufferTask&) = delete;
-};
-
 class GrVkOpsRenderPass : public GrOpsRenderPass, private GrMesh::SendToGpuImpl {
 public:
     GrVkOpsRenderPass(GrVkGpu*);
@@ -58,7 +40,8 @@ public:
 
     void set(GrRenderTarget*, GrSurfaceOrigin,
              const GrOpsRenderPass::LoadAndStoreInfo&,
-             const GrOpsRenderPass::StencilLoadAndStoreInfo&);
+             const GrOpsRenderPass::StencilLoadAndStoreInfo&,
+             const SkTArray<GrTextureProxy*, true>& sampledProxies);
     void reset();
 
     void submit();
@@ -68,7 +51,9 @@ public:
 #endif
 
 private:
-    void init();
+    void init(const GrOpsRenderPass::LoadAndStoreInfo&,
+              const GrOpsRenderPass::StencilLoadAndStoreInfo&,
+              const SkPMColor4f& clearColor);
 
     // Called instead of init when we are drawing to a render target that already wraps a secondary
     // command buffer.
@@ -77,6 +62,8 @@ private:
     bool wrapsSecondaryCommandBuffer() const;
 
     GrGpu* gpu() override;
+
+    GrVkCommandBuffer* currentCommandBuffer();
 
     // Bind vertex and index buffers
     void bindGeometry(const GrGpuBuffer* indexBuffer,
@@ -96,8 +83,6 @@ private:
                 const GrMesh[],
                 int meshCount,
                 const SkRect& bounds) override;
-
-    void appendSampledTexture(GrTexture*);
 
     // GrMesh::SendToGpuImpl methods. These issue the actual Vulkan draw commands.
     // Marked final as a hint to the compiler to not use virtual dispatch.
@@ -132,41 +117,11 @@ private:
 
     void addAdditionalRenderPass();
 
-    enum class LoadStoreState {
-        kUnknown,
-        kStartsWithClear,
-        kStartsWithDiscard,
-        kLoadAndStore,
-    };
-
-    struct CommandBufferInfo {
-        const GrVkRenderPass* fRenderPass;
-        std::unique_ptr<GrVkSecondaryCommandBuffer> fCommandBuffer;
-        int fNumPreCmds = 0;
-        VkClearValue fColorClearValue;
-        SkRect fBounds;
-        bool fIsEmpty = true;
-        LoadStoreState fLoadStoreState = LoadStoreState::kUnknown;
-        // Array of images that will be sampled and thus need to be transferred to sampled layout
-        // before submitting the secondary command buffers. This must happen after we do any predraw
-        // uploads or copies.
-        SkTArray<sk_sp<GrVkTexture>> fSampledTextures;
-
-        GrVkSecondaryCommandBuffer* currentCmdBuf() {
-            return fCommandBuffer.get();
-        }
-    };
-
-    SkTArray<CommandBufferInfo>                 fCommandBufferInfos;
-    GrTRecorder<GrVkPrimaryCommandBufferTask>   fPreCommandBufferTasks{1024};
+    std::unique_ptr<GrVkSecondaryCommandBuffer> fCurrentSecondaryCommandBuffer;
+    const GrVkRenderPass*                       fCurrentRenderPass;
+    bool                                        fCurrentCBIsEmpty = true;
+    SkIRect                                     fBounds;
     GrVkGpu*                                    fGpu;
-    GrVkPipelineState*                          fLastPipelineState = nullptr;
-    SkPMColor4f                                 fClearColor;
-    VkAttachmentLoadOp                          fVkColorLoadOp;
-    VkAttachmentStoreOp                         fVkColorStoreOp;
-    VkAttachmentLoadOp                          fVkStencilLoadOp;
-    VkAttachmentStoreOp                         fVkStencilStoreOp;
-    int                                         fCurrentCmdInfo = -1;
 
 #ifdef SK_DEBUG
     // When we are actively recording into the GrVkOpsRenderPass we set this flag to true. This

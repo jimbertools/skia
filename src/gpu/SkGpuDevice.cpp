@@ -86,8 +86,12 @@ sk_sp<SkGpuDevice> SkGpuDevice::Make(GrContext* context,
     if (!renderTargetContext || context->priv().abandoned()) {
         return nullptr;
     }
+
+    SkColorType ct = GrColorTypeToSkColorType(renderTargetContext->colorSpaceInfo().colorType());
+
     unsigned flags;
-    if (!CheckAlphaTypeAndGetFlags(nullptr, init, &flags)) {
+    if (!context->colorTypeSupportedAsSurface(ct) ||
+        !CheckAlphaTypeAndGetFlags(nullptr, init, &flags)) {
         return nullptr;
     }
     return sk_sp<SkGpuDevice>(new SkGpuDevice(context, std::move(renderTargetContext), flags));
@@ -98,7 +102,8 @@ sk_sp<SkGpuDevice> SkGpuDevice::Make(GrContext* context, SkBudgeted budgeted,
                                      GrSurfaceOrigin origin, const SkSurfaceProps* props,
                                      GrMipMapped mipMapped, InitContents init) {
     unsigned flags;
-    if (!CheckAlphaTypeAndGetFlags(&info, init, &flags)) {
+    if (!context->colorTypeSupportedAsSurface(info.colorType()) ||
+        !CheckAlphaTypeAndGetFlags(&info, init, &flags)) {
         return nullptr;
     }
 
@@ -726,8 +731,7 @@ bool SkGpuDevice::shouldTileImageID(uint32_t imageID,
     // assumption here is that sw bitmap size is a good proxy for its size as
     // a texture
     size_t bmpSize = area * sizeof(SkPMColor);  // assume 32bit pixels
-    size_t cacheSize;
-    fContext->getResourceCacheLimits(nullptr, &cacheSize);
+    size_t cacheSize = fContext->getResourceCacheLimit();
     if (bmpSize < cacheSize / 2) {
         return false;
     }

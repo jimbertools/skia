@@ -834,7 +834,8 @@ static bool check_write_and_transfer_input(GrGLTexture* glTex) {
 
 bool GrGLGpu::onWritePixels(GrSurface* surface, int left, int top, int width, int height,
                             GrColorType surfaceColorType, GrColorType srcColorType,
-                            const GrMipLevel texels[], int mipLevelCount) {
+                            const GrMipLevel texels[], int mipLevelCount,
+                            bool prepForTexSampling) {
     auto glTex = static_cast<GrGLTexture*>(surface->asTexture());
 
     if (!check_write_and_transfer_input(glTex)) {
@@ -1807,13 +1808,12 @@ sk_sp<GrGpuBuffer> GrGLGpu::onCreateBuffer(size_t size, GrGpuBufferType intended
 void GrGLGpu::flushScissor(const GrScissorState& scissorState, int rtWidth, int rtHeight,
                            GrSurfaceOrigin rtOrigin) {
     if (scissorState.enabled()) {
-        GrGLIRect scissor;
-        scissor.setRelativeTo(rtHeight, scissorState.rect(), rtOrigin);
+        auto scissor = GrNativeRect::MakeRelativeTo(rtOrigin, rtHeight, scissorState.rect());
         // if the scissor fully contains the viewport then we fall through and
         // disable the scissor test.
         if (!scissor.contains(rtWidth, rtHeight)) {
             if (fHWScissorSettings.fRect != scissor) {
-                scissor.pushToGLScissor(this->glInterface());
+                GL_CALL(Scissor(scissor.fX, scissor.fY, scissor.fWidth, scissor.fHeight));
                 fHWScissorSettings.fRect = scissor;
             }
             if (kYes_TriState != fHWScissorSettings.fEnabled) {
@@ -1845,10 +1845,10 @@ void GrGLGpu::flushWindowRectangles(const GrWindowRectsState& windowState,
     int numWindows = SkTMin(windowState.numWindows(), int(GrWindowRectangles::kMaxWindows));
     SkASSERT(windowState.numWindows() == numWindows);
 
-    GrGLIRect glwindows[GrWindowRectangles::kMaxWindows];
+    GrNativeRect glwindows[GrWindowRectangles::kMaxWindows];
     const SkIRect* skwindows = windowState.windows().data();
     for (int i = 0; i < numWindows; ++i) {
-        glwindows[i].setRelativeTo(rt->height(), skwindows[i], origin);
+        glwindows[i].setRelativeTo(origin, rt->height(), skwindows[i]);
     }
 
     GrGLenum glmode = (Mode::kExclusive == windowState.mode()) ? GR_GL_EXCLUSIVE : GR_GL_INCLUSIVE;
@@ -2182,8 +2182,7 @@ bool GrGLGpu::readOrTransferPixelsFrom(GrSurface* surface, int left, int top, in
     }
 
     // the read rect is viewport-relative
-    GrGLIRect readRect;
-    readRect.setRelativeTo(surface->height(), left, top, width, height, kTopLeft_GrSurfaceOrigin);
+    GrNativeRect readRect = {left, top, width, height};
 
     // determine if GL can read using the passed rowBytes or if we need a scratch buffer.
     if (rowWidthInPixels != width) {
@@ -2203,7 +2202,7 @@ bool GrGLGpu::readOrTransferPixelsFrom(GrSurface* surface, int left, int top, in
                                         GR_GL_RENDERBUFFER, 0));
     }
 
-    GL_CALL(ReadPixels(readRect.fLeft, readRect.fBottom, readRect.fWidth, readRect.fHeight,
+    GL_CALL(ReadPixels(readRect.fX, readRect.fY, readRect.fWidth, readRect.fHeight,
                        externalFormat, externalType, offsetOrPtr));
 
     if (reattachStencil) {
@@ -2247,7 +2246,8 @@ bool GrGLGpu::onReadPixels(GrSurface* surface, int left, int top, int width, int
 GrOpsRenderPass* GrGLGpu::getOpsRenderPass(
         GrRenderTarget* rt, GrSurfaceOrigin origin, const SkRect& bounds,
         const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
-        const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo) {
+        const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo,
+        const SkTArray<GrTextureProxy*, true>& sampledProxies) {
     if (!fCachedOpsRenderPass) {
         fCachedOpsRenderPass.reset(new GrGLOpsRenderPass(this));
     }
@@ -2305,9 +2305,9 @@ void GrGLGpu::flushFramebufferSRGB(bool enable) {
 }
 
 void GrGLGpu::flushViewport(int width, int height) {
-    GrGLIRect viewport = {0, 0, width, height};
+    GrNativeRect viewport = {0, 0, width, height};
     if (fHWViewport != viewport) {
-        viewport.pushToGLViewport(this->glInterface());
+        GL_CALL(Viewport(viewport.fX, viewport.fY, viewport.fWidth, viewport.fHeight));
         fHWViewport = viewport;
     }
 }
@@ -2525,12 +2525,12 @@ void GrGLGpu::onResolveRenderTarget(GrRenderTarget* target) {
                     r = target->width();
                     t = target->height();
                 } else {
-                    GrGLIRect rect;
-                    rect.setRelativeTo(rt->height(), dirtyRect, kDirtyRectOrigin);
-                    l = rect.fLeft;
-                    b = rect.fBottom;
-                    r = rect.fLeft + rect.fWidth;
-                    t = rect.fBottom + rect.fHeight;
+                    auto rect = GrNativeRect::MakeRelativeTo(
+                            kDirtyRectOrigin, rt->height(), dirtyRect);
+                    l = rect.fX;
+                    b = rect.fY;
+                    r = rect.fX + rect.fWidth;
+                    t = rect.fY + rect.fHeight;
                 }
 
                 // BlitFrameBuffer respects the scissor, so disable it.
@@ -3088,7 +3088,8 @@ void GrGLGpu::bindFramebuffer(GrGLenum target, GrGLuint fboid) {
     if (this->caps()->workarounds().restore_scissor_on_fbo_change) {
         // The driver forgets the correct scissor when modifying the FBO binding.
         if (!fHWScissorSettings.fRect.isInvalid()) {
-            fHWScissorSettings.fRect.pushToGLScissor(this->glInterface());
+            const GrNativeRect& r = fHWScissorSettings.fRect;
+            GL_CALL(Scissor(r.fX, r.fY, r.fWidth, r.fHeight));
         }
     }
 

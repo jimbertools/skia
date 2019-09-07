@@ -20,8 +20,7 @@ std::unique_ptr<GrRenderTargetContext> GrOnFlushResourceProvider::makeRenderTarg
         sk_sp<GrSurfaceProxy> proxy, GrColorType colorType, sk_sp<SkColorSpace> colorSpace,
         const SkSurfaceProps* props) {
     // Since this is at flush time and these won't be allocated for us by the GrResourceAllocator
-    // we have to manually ensure it is allocated here. The proxy had best have been created
-    // with the kNoPendingIO flag!
+    // we have to manually ensure it is allocated here.
     if (!this->instatiateProxy(proxy.get())) {
         return nullptr;
     }
@@ -72,13 +71,16 @@ void GrOnFlushResourceProvider::processInvalidUniqueKey(const GrUniqueKey& key) 
 }
 
 sk_sp<GrTextureProxy> GrOnFlushResourceProvider::findOrCreateProxyByUniqueKey(
-        const GrUniqueKey& key, GrColorType colorType, GrSurfaceOrigin origin) {
+        const GrUniqueKey& key,
+        GrColorType colorType,
+        GrSurfaceOrigin origin,
+        UseAllocator useAllocator) {
     auto proxyProvider = fDrawingMgr->getContext()->priv().proxyProvider();
-    return proxyProvider->findOrCreateProxyByUniqueKey(key, colorType, origin);
+    return proxyProvider->findOrCreateProxyByUniqueKey(key, colorType, origin, useAllocator);
 }
 
 bool GrOnFlushResourceProvider::instatiateProxy(GrSurfaceProxy* proxy) {
-    SkASSERT(proxy->priv().ignoredByResourceAllocator());
+    SkASSERT(proxy->canSkipResourceAllocator());
 
     // TODO: this class should probably just get a GrDirectContext
     auto direct = fDrawingMgr->getContext()->priv().asDirectContext();
@@ -88,9 +90,7 @@ bool GrOnFlushResourceProvider::instatiateProxy(GrSurfaceProxy* proxy) {
 
     auto resourceProvider = direct->priv().resourceProvider();
 
-    if (GrSurfaceProxy::LazyState::kNot != proxy->lazyInstantiationState()) {
-        // DDL TODO: Decide if we ever plan to have these proxies use the GrDeinstantiateTracker
-        // to support unistantiating them at the end of a flush.
+    if (proxy->isLazy()) {
         return proxy->priv().doLazyInstantiation(resourceProvider);
     }
 
@@ -121,11 +121,7 @@ sk_sp<const GrGpuBuffer> GrOnFlushResourceProvider::findOrMakeStaticBuffer(
 
     auto resourceProvider = direct->priv().resourceProvider();
 
-    sk_sp<const GrGpuBuffer> buffer =
-            resourceProvider->findOrMakeStaticBuffer(intendedType, size, data, key);
-    // Static buffers should never have pending IO.
-    SkASSERT(!buffer || !buffer->resourcePriv().hasPendingIO_debugOnly());
-    return buffer;
+    return resourceProvider->findOrMakeStaticBuffer(intendedType, size, data, key);
 }
 
 uint32_t GrOnFlushResourceProvider::contextID() const {

@@ -14,10 +14,10 @@
 #include "src/core/SkLRUCache.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrMesh.h"
+#include "src/gpu/GrNativeRect.h"
 #include "src/gpu/GrWindowRectsState.h"
 #include "src/gpu/GrXferProcessor.h"
 #include "src/gpu/gl/GrGLContext.h"
-#include "src/gpu/gl/GrGLIRect.h"
 #include "src/gpu/gl/GrGLPathRendering.h"
 #include "src/gpu/gl/GrGLProgram.h"
 #include "src/gpu/gl/GrGLRenderTarget.h"
@@ -29,10 +29,6 @@ class GrGLBuffer;
 class GrGLOpsRenderPass;
 class GrPipeline;
 class GrSwizzle;
-
-#ifdef SK_DEBUG
-#define PROGRAM_CACHE_STATS
-#endif
 
 class GrGLGpu final : public GrGpu, private GrMesh::SendToGpuImpl {
 public:
@@ -124,7 +120,8 @@ public:
     GrOpsRenderPass* getOpsRenderPass(
             GrRenderTarget*, GrSurfaceOrigin, const SkRect&,
             const GrOpsRenderPass::LoadAndStoreInfo&,
-            const GrOpsRenderPass::StencilLoadAndStoreInfo&) override;
+            const GrOpsRenderPass::StencilLoadAndStoreInfo&,
+            const SkTArray<GrTextureProxy*, true>& sampledProxies) override;
 
     void invalidateBoundRenderTarget() {
         fHWBoundRenderTargetUniqueID.makeInvalid();
@@ -138,6 +135,10 @@ public:
                                           const SkColor4f* color,
                                           GrProtected isProtected) override;
     void deleteBackendTexture(const GrBackendTexture&) override;
+
+    bool precompileShader(const SkData& key, const SkData& data) override {
+        return fProgramCache->precompileShader(key, data);
+    }
 
 #if GR_TEST_UTILS
     bool isTestingOnlyBackendTexture(const GrBackendTexture&) const override;
@@ -244,7 +245,8 @@ private:
 
     bool onWritePixels(GrSurface*, int left, int top, int width, int height,
                        GrColorType surfaceColorType, GrColorType srcColorType,
-                       const GrMipLevel texels[], int mipLevelCount) override;
+                       const GrMipLevel texels[], int mipLevelCount,
+                       bool prepForTexSampling) override;
 
     bool onTransferPixelsTo(GrTexture*, int left, int top, int width, int height,
                             GrColorType textureColorType, GrColorType bufferColorType,
@@ -319,17 +321,10 @@ private:
                                 const GrPrimitiveProcessor&,
                                 const GrTextureProxy* const primProcProxies[],
                                 const GrPipeline&, bool hasPointSize);
+        bool precompileShader(const SkData& key, const SkData& data);
 
     private:
-        // We may actually have kMaxEntries+1 shaders in the GL context because we create a new
-        // shader before evicting from the cache.
-        static const int kMaxEntries = 128;
-
         struct Entry;
-
-        // binary search for entry matching desc. returns index into fEntries that matches desc or ~
-        // of the index of where it should be inserted.
-        int search(const GrProgramDesc& desc) const;
 
         struct DescHash {
             uint32_t operator()(const GrProgramDesc& desc) const {
@@ -339,12 +334,7 @@ private:
 
         SkLRUCache<GrProgramDesc, std::unique_ptr<Entry>, DescHash> fMap;
 
-        GrGLGpu*                    fGpu;
-#ifdef PROGRAM_CACHE_STATS
-        int                         fTotalRequests;
-        int                         fCacheMisses;
-        int                         fHashMisses; // cache hit but hash table missed
-#endif
+        GrGLGpu* fGpu;
     };
 
     void flushColorWrite(bool writeColor);
@@ -457,8 +447,8 @@ private:
 
     // last scissor / viewport scissor state seen by the GL.
     struct {
-        TriState    fEnabled;
-        GrGLIRect   fRect;
+        TriState fEnabled;
+        GrNativeRect fRect;
         void invalidate() {
             fEnabled = kUnknown_TriState;
             fRect.invalidate();
@@ -504,7 +494,7 @@ private:
         GrWindowRectsState   fWindowState;
     } fHWWindowRectsState;
 
-    GrGLIRect                   fHWViewport;
+    GrNativeRect fHWViewport;
 
     /**
      * Tracks vertex attrib array state.

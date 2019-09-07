@@ -306,7 +306,7 @@ public:
 
         fAtlasProxy = GrProxyProvider::MakeFullyLazyProxy(
                 [format](GrResourceProvider* resourceProvider)
-                        -> GrSurfaceProxy::LazyInstantiationResult {
+                        -> GrSurfaceProxy::LazyCallbackResult {
                     GrSurfaceDesc desc;
                     // TODO: until partial flushes in MDB lands we're stuck having
                     // all 9 atlas draws occur
@@ -314,9 +314,8 @@ public:
                     desc.fHeight = kAtlasTileSize;
                     desc.fConfig = kRGBA_8888_GrPixelConfig;
 
-                    return resourceProvider->createTexture(
-                            desc, format, GrRenderable::kYes, 1, SkBudgeted::kYes, GrProtected::kNo,
-                            GrResourceProvider::Flags::kNoPendingIO);
+                    return resourceProvider->createTexture(desc, format, GrRenderable::kYes, 1,
+                                                           SkBudgeted::kYes, GrProtected::kNo);
                 },
                 format,
                 GrRenderable::kYes,
@@ -324,9 +323,9 @@ public:
                 GrProtected::kNo,
                 kBottomLeft_GrSurfaceOrigin,
                 kRGBA_8888_GrPixelConfig,
-                *proxyProvider->caps());
+                *proxyProvider->caps(),
+                GrSurfaceProxy::UseAllocator::kNo);
 
-        fAtlasProxy->priv().setIgnoredByResourceAllocator();
         return fAtlasProxy;
     }
 
