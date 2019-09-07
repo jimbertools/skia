@@ -31,6 +31,7 @@
 #include "include/core/SkStrokeRec.h"
 #include "include/core/SkSurface.h"
 #include "include/core/SkSurfaceProps.h"
+#include "include/core/SkImageGenerator.h"
 #include "include/core/SkTextBlob.h"
 #include "include/core/SkTypeface.h"
 #include "include/core/SkTypes.h"
@@ -57,6 +58,7 @@
 #include "modules/canvaskit/WasmAliases.h"
 #include <emscripten.h>
 #include <emscripten/bind.h>
+
 
 #if SK_SUPPORT_GPU
 #include "include/gpu/GrBackendSurface.h"
@@ -625,6 +627,12 @@ EMSCRIPTEN_BINDINGS(Skia) {
         sk_sp<SkData> bytes = SkData::MakeFromMalloc(imgData, length);
         return SkImage::MakeFromEncoded(std::move(bytes));
     }), allow_raw_pointers());
+    function("_decodeImageToRaster", optional_override([](uintptr_t iptr,
+                                                  size_t length)->sk_sp<SkImage> {
+        uint8_t* imgData = reinterpret_cast<uint8_t*>(iptr);
+        sk_sp<SkData> bytes = SkData::MakeFromMalloc(imgData, length);
+        return SkImage::DecodeToRaster(std::move(bytes));
+    }), allow_raw_pointers());
     function("_getRasterDirectSurface", optional_override([](const SimpleImageInfo ii,
                                                              uintptr_t /* uint8_t*  */ pPtr,
                                                              size_t rowBytes)->sk_sp<SkSurface> {
@@ -877,9 +885,26 @@ EMSCRIPTEN_BINDINGS(Skia) {
             self.setMatrix(toSkMatrix(simpleMatrix));
         }));
 
+    class_<SkImageGenerator>("SkImageGenerator")
+        .class_function("MakeFromEncoded", &SkImageGenerator::MakeFromEncoded,  allow_raw_pointers())
+        .function("_getPixels", optional_override([](SkImageGenerator& self, SimpleImageInfo di, uintptr_t pPtr, size_t rowBytes)->bool{
+            uint8_t* pixels = reinterpret_cast<uint8_t*>(pPtr);
+            SkImageInfo dstInfo = toSkImageInfo(di);
+
+            return self.getPixels(dstInfo, pixels, rowBytes);
+        }));
+
+
+
     class_<SkData>("SkData")
         .smart_ptr<sk_sp<SkData>>("sk_sp<SkData>>")
+        .class_function("MakeFromMalloc", optional_override([](uintptr_t iptr, size_t length)->sk_sp<SkData> {
+            uint8_t* data = reinterpret_cast<uint8_t*>(iptr);
+            sk_sp<SkData> skdata = SkData::MakeFromMalloc(data, length);
+            return skdata;
+        }))
         .function("size", &SkData::size);
+
 
     class_<SkFont>("SkFont")
         .constructor<>()
@@ -951,8 +976,11 @@ EMSCRIPTEN_BINDINGS(Skia) {
         return self.makeFromData(fontData);
     }), allow_raw_pointers());
 
+
     class_<SkImage>("SkImage")
         .smart_ptr<sk_sp<SkImage>>("sk_sp<SkImage>")
+        .class_function("MakeFromBitmap", &SkImage::MakeFromBitmap)
+        .function("scalePixels", &SkImage::scalePixels)
         .function("height", &SkImage::height)
         .function("width", &SkImage::width)
         .function("makeSubset", &SkImage::makeSubset)
@@ -1118,7 +1146,21 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .smart_ptr<sk_sp<SkShader>>("sk_sp<SkShader>");
     
     class_<SkImageInfo>("SkImageInfo");
+
+    class_<SkPixmap>("SkPixmap")
+    .constructor<>()
+    .class_function("makePixmap", optional_override([](SimpleImageInfo& simpleImageInfo, uintptr_t addr , size_t rowsize)->SkPixmap {
+        auto imageInfo = toSkImageInfo(simpleImageInfo);
+        auto ptr = reinterpret_cast<void*>(addr);
+        return SkPixmap(imageInfo, ptr, rowsize);
+    }))
+    .function("scalePixels", &SkPixmap::scalePixels)
+    .function("reset", select_overload<void ()>(&SkPixmap::reset));
  
+    class_<SkBitmap>("SkBitmap")
+        .constructor<>()
+        .function("installPixels", select_overload<bool (const SkPixmap&)>(&SkBitmap::installPixels));
+
     class_<SkSurface>("SkSurface")
         .smart_ptr<sk_sp<SkSurface>>("sk_sp<SkSurface>")
         .function("_flush", select_overload<void()>(&SkSurface::flush))
@@ -1246,6 +1288,14 @@ EMSCRIPTEN_BINDINGS(Skia) {
             return self.getPixels(dstInfo, pixels, dstRowBytes, &optionsconst);
             
         }))
+        .function("_getPixels", optional_override([](SkCodec& self, SkPixmap& pm, SkCodec::Options options)->SkCodec::Result /* BoneIndices* */{
+            // Emscripten won't let us return bare pointers, but we can return ints just fine.
+            const SkCodec::Options optionsconst = options;
+            auto toreturn = self.getPixels(pm, &optionsconst);
+            std::cout << pm.bounds().fRight << std::endl;
+            return toreturn;
+            
+        }))
         .function("_getFrameInfo", optional_override([](SkCodec& self)->JSArray {
             auto frameInfos = self.getFrameInfo();
             JSArray frameInfoArray = emscripten::val::array();
@@ -1283,6 +1333,10 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .value("kSlight", SkFontHinting::kSlight)
         .value("kNormal", SkFontHinting::kNormal)
         .value("kFull", SkFontHinting::kFull);
+
+    enum_<SkImage::CachingHint>("CachingHint") 
+        .value("kAllow_CachingHint",   SkImage::kAllow_CachingHint)
+        .value("kDisallow_CachingHint",   SkImage::kDisallow_CachingHint);
 
     enum_<SkCodec::Result>("CodecResult")
         .value("kSuccess",   SkCodec::kSuccess)

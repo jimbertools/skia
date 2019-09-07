@@ -33,6 +33,8 @@
 #endif
 #include "include/gpu/GrBackendSurface.h"
 
+#include <iostream>
+
 SkImage::SkImage(const SkImageInfo& info, uint32_t uniqueID)
         : fInfo(info)
         , fUniqueID(kNeedNewImageUniqueID == uniqueID ? SkNextID::ImageID() : uniqueID) {
@@ -217,6 +219,7 @@ bool SkImage::readPixels(const SkPixmap& pmap, int srcX, int srcY, CachingHint c
 
 sk_sp<SkImage> SkImage::MakeFromBitmap(const SkBitmap& bm) {
     if (!bm.pixelRef()) {
+        std::cout << "ie geraakt ier" << std::endl;
         return nullptr;
     }
 
