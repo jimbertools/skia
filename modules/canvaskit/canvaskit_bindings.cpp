@@ -45,12 +45,16 @@
 #include "include/effects/SkDiscretePathEffect.h"
 #include "include/effects/SkGradientShader.h"
 #include "include/effects/SkTrimPathEffect.h"
+#include "include/gpu/GrTypes.h"
 #include "include/pathops/SkPathOps.h"
 #include "include/utils/SkParsePath.h"
 #include "include/utils/SkShadowUtils.h"
 #include "modules/skshaper/include/SkShaper.h"
 #include "src/core/SkFontMgrPriv.h"
 #include "src/core/SkMakeUnique.h"
+#include "src/core/SkMakeUnique.h"
+#include "include/core/SkImageFilter.h"
+#include "include/effects/SkImageFilters.h"
 
 #include <iostream>
 #include <string>
@@ -654,6 +658,12 @@ EMSCRIPTEN_BINDINGS(Skia) {
         // Adds a little helper because emscripten doesn't expose default params.
         return SkMaskFilter::MakeBlur(style, sigma, respectCTM);
     }), allow_raw_pointers());
+    function("MakeShadowImageFilter", optional_override([](SkScalar dx, SkScalar dy,
+                                               SkScalar sigmaX, SkScalar sigmaY,
+                                               SkColor color)->sk_sp<SkImageFilter> {
+        // Adds a little helper because emscripten doesn't expose default params.
+        return SkImageFilters::DropShadow(dx, dy, sigmaX, sigmaY, color, nullptr, nullptr);
+    }), allow_raw_pointers());
     function("_MakePathFromCmds", &MakePathFromCmds);
     function("MakePathFromOp", &MakePathFromOp);
     function("MakePathFromSVGString", &MakePathFromSVGString);
@@ -773,6 +783,10 @@ EMSCRIPTEN_BINDINGS(Skia) {
         }));
 #endif
 
+    class_<GrBackendTexture>("GrBackendTexture");
+
+
+
     class_<SkSurfaceProps>("SkSurfaceProps")
     
      .class_function("create", optional_override([]()->SkSurfaceProps {
@@ -783,6 +797,11 @@ EMSCRIPTEN_BINDINGS(Skia) {
     class_<SkCanvas>("SkCanvas")
         .constructor<>()
         .constructor<int , int , const SkSurfaceProps* >()
+        //sk_sp<GrContext>
+        // .function("getGrContext", &SkCanvas::getGrContext,  allow_raw_pointers())
+        .function("getGrContext", optional_override([](SkCanvas& self)->sk_sp<GrContext> {
+            return sk_sp<GrContext>(self.getGrContext());
+        }))
         .function("clear", &SkCanvas::clear)
         .function("clipPath", select_overload<void (const SkPath&, SkClipOp, bool)>(&SkCanvas::clipPath))
         .function("clipPath", select_overload<void (const SkPath&, bool)>(&SkCanvas::clipPath))
@@ -976,10 +995,20 @@ EMSCRIPTEN_BINDINGS(Skia) {
         return self.makeFromData(fontData);
     }), allow_raw_pointers());
 
+    class_<SkColorSpace>("SkColorSpace");
 
     class_<SkImage>("SkImage")
         .smart_ptr<sk_sp<SkImage>>("sk_sp<SkImage>")
+        .function("makeTextureImage", &SkImage::makeTextureImage, allow_raw_pointers())
         .class_function("MakeFromBitmap", &SkImage::MakeFromBitmap)
+        .class_function("MakeFromTexture", optional_override([](GrContext* context, const GrBackendTexture& backendTexture, GrSurfaceOrigin origin,SkColorType colorType, SkAlphaType alphaType)->sk_sp<SkImage> {
+            return SkImage::MakeFromTexture(context, backendTexture, origin, colorType, alphaType, nullptr);
+        }), allow_raw_pointers())
+        .function("getBackendTexture", optional_override([](sk_sp<SkImage> self,
+                                bool flush)->GrBackendTexture {
+            auto text = self->getBackendTexture(flush, nullptr);
+            return text;
+        }), allow_raw_pointers())
         .function("scalePixels", &SkImage::scalePixels)
         .function("height", &SkImage::height)
         .function("width", &SkImage::width)
@@ -1011,6 +1040,9 @@ EMSCRIPTEN_BINDINGS(Skia) {
     class_<SkMaskFilter>("SkMaskFilter")
         .smart_ptr<sk_sp<SkMaskFilter>>("sk_sp<SkMaskFilter>");
 
+    class_<SkImageFilter>("SkImageFilter")
+        .smart_ptr<sk_sp<SkImageFilter>>("sk_sp<SkImageFilter>");
+
     class_<SkPaint>("SkPaint")
         .constructor<>()
         .function("copy", optional_override([](const SkPaint& self)->SkPaint {
@@ -1019,6 +1051,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         }))
         .function("getBlendMode", &SkPaint::getBlendMode)
         .function("getColor", &SkPaint::getColor)
+        .function("setImageFilter", &SkPaint::setImageFilter)
         .function("getFilterQuality", &SkPaint::getFilterQuality)
         .function("getStrokeCap", &SkPaint::getStrokeCap)
         .function("getStrokeJoin", &SkPaint::getStrokeJoin)
@@ -1327,6 +1360,16 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("priorframe", optional_override([](SkCodec::Options& self)->int {
             return self.fPriorFrame;
         }));
+
+    enum_<GrMipMapped>("GrMipMapped")
+        .value("kNo", GrMipMapped::kNo)
+        .value("kYes", GrMipMapped::kYes);
+
+
+    enum_<GrSurfaceOrigin>("GrSurfaceOrigin")
+        .value("kTopLeft_GrSurfaceOrigin", kTopLeft_GrSurfaceOrigin)
+        .value("kBottomLeft_GrSurfaceOrigin", kBottomLeft_GrSurfaceOrigin);
+
     
     enum_<SkFontHinting>("FontHinting")
         .value("kNone", SkFontHinting::kNone)

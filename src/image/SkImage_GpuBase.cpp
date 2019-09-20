@@ -21,6 +21,8 @@
 #include "src/image/SkImage_Gpu.h"
 #include "src/image/SkImage_GpuBase.h"
 #include "src/image/SkReadPixelsRec.h"
+#include <iostream>
+
 
 SkImage_GpuBase::SkImage_GpuBase(sk_sp<GrContext> context, int width, int height, uint32_t uniqueID,
                                  SkColorType ct, SkAlphaType at, sk_sp<SkColorSpace> cs)
@@ -42,16 +44,21 @@ bool SkImage_GpuBase::ValidateBackendTexture(const GrCaps* caps, const GrBackend
                                              GrColorType grCT, SkColorType ct, SkAlphaType at,
                                              sk_sp<SkColorSpace> cs) {
     if (!tex.isValid()) {
+        std::cout << "here" << std::endl;
         return false;
     }
     // TODO: Create a SkImageColorInfo struct for color, alpha, and color space so we don't need to
     // create a fake image info here.
     SkImageInfo info = SkImageInfo::Make(1, 1, ct, at, cs);
     if (!SkImageInfoIsValid(info)) {
+                std::cout << "hedddre" << std::endl;
+
         return false;
     }
     GrBackendFormat backendFormat = tex.getBackendFormat();
     if (!backendFormat.isValid()) {
+                std::cout << "herfde" << std::endl;
+
         return false;
     }
 

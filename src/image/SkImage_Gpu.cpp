@@ -47,6 +47,7 @@
 #include "src/gpu/effects/GrYUVtoRGBEffect.h"
 #include "src/gpu/gl/GrGLTexture.h"
 #include "src/image/SkImage_Gpu.h"
+#include <iostream>
 
 static SkColorType proxy_color_type(GrTextureProxy* proxy) {
     SkColorType colorType;
