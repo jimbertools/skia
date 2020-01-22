@@ -389,7 +389,7 @@ static GrTextureDomain::Mode convert_tilemodes(SkTileMode tileMode) {
     case SkTileMode::kClamp:
         return GrTextureDomain::kClamp_Mode;
     case SkTileMode::kMirror:
-        // TODO (michaelludwig) - Implement mirror tiling, treat as repeat for now.
+        return GrTextureDomain::kMirrorRepeat_Mode;
     case SkTileMode::kRepeat:
         return GrTextureDomain::kRepeat_Mode;
     case SkTileMode::kDecal:
@@ -475,7 +475,7 @@ sk_sp<SkSpecialImage> SkMatrixConvolutionImageFilterImpl::onFilterImage(const Co
         // evaluating the FP, and the dst rect just uses the size of dstBounds.
         dstBounds.offset(input->subset().x(), input->subset().y());
         return DrawWithFP(context, std::move(fp), dstBounds, ctx.colorType(), ctx.colorSpace(),
-                          isProtected ? GrProtected::kYes : GrProtected::kNo);
+                          isProtected);
     }
 #endif
 

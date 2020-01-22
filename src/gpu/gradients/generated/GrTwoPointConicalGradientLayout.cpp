@@ -52,9 +52,8 @@ public:
                 "0:\n        {\n            half r0 = %s.x;\n            @if (%s) {\n              "
                 "  t = length(p) - float(r0);\n            } else {\n                t = "
                 "-length(p) - float(r0);\n       ",
-                _outer.computeLocalCoordsInVertexShader() ? sk_TransformedCoords2D_0.c_str()
-                                                          : "_coords",
-                (int)_outer.type, args.fUniformHandler->getUniformCStr(focalParamsVar),
+                sk_TransformedCoords2D_0.c_str(), (int)_outer.type,
+                args.fUniformHandler->getUniformCStr(focalParamsVar),
                 args.fUniformHandler->getUniformCStr(focalParamsVar),
                 (_outer.isRadiusIncreasing ? "true" : "false"));
         fragBuilder->codeAppendf(
@@ -223,7 +222,7 @@ std::unique_ptr<GrFragmentProcessor> GrTwoPointConicalGradientLayout::TestCreate
     GrTest::TestAsFPArgs asFPArgs(d);
     std::unique_ptr<GrFragmentProcessor> fp = as_SB(shader)->asFragmentProcessor(asFPArgs.args());
 
-    GrAlwaysAssert(fp);
+    SkASSERT_RELEASE(fp);
     return fp;
 }
 #endif

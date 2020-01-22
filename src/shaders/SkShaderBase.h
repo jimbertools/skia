@@ -15,6 +15,7 @@
 #include "src/core/SkEffectPriv.h"
 #include "src/core/SkMask.h"
 #include "src/core/SkTLazy.h"
+#include "src/core/SkVM_fwd.h"
 
 #if SK_SUPPORT_GPU
 #include "src/gpu/GrFPArgs.h"
@@ -206,6 +207,13 @@ public:
         return this->onAppendUpdatableStages(rec);
     }
 
+    bool program(skvm::Builder*,
+                 const SkMatrix& ctm, const SkMatrix* localM,
+                 SkFilterQuality quality, SkColorSpace* dstCS,
+                 skvm::Uniforms* uniforms, SkArenaAlloc* alloc,
+                 skvm::F32 x, skvm::F32 y,
+                 skvm::F32* r, skvm::F32* g, skvm::F32* b, skvm::F32* a) const;
+
 protected:
     SkShaderBase(const SkMatrix* localMatrix = nullptr);
 
@@ -233,6 +241,13 @@ protected:
 private:
     // This is essentially const, but not officially so it can be modified in constructors.
     SkMatrix fLocalMatrix;
+
+    virtual bool onProgram(skvm::Builder*,
+                           const SkMatrix& ctm, const SkMatrix* localM,
+                           SkFilterQuality quality, SkColorSpace* dstCS,
+                           skvm::Uniforms* uniforms, SkArenaAlloc* alloc,
+                           skvm::F32 x, skvm::F32 y,
+                           skvm::F32* r, skvm::F32* g, skvm::F32* b, skvm::F32* a) const;
 
     typedef SkShader INHERITED;
 };

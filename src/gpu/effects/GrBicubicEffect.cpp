@@ -145,31 +145,30 @@ void GrGLBicubicEffect::emitCode(EmitArgs& args) {
 void GrGLBicubicEffect::onSetData(const GrGLSLProgramDataManager& pdman,
                                   const GrFragmentProcessor& processor) {
     const GrBicubicEffect& bicubicEffect = processor.cast<GrBicubicEffect>();
-    GrTextureProxy* proxy = processor.textureSampler(0).proxy();
-    GrTexture* texture = proxy->peekTexture();
+    const auto& view = processor.textureSampler(0).view();
+    SkISize textureDims = view.proxy()->backingStoreDimensions();
 
     float dims[4] = {0, 0, 0, 0};
     if (bicubicEffect.direction() != GrBicubicEffect::Direction::kY) {
-        dims[0] = 1.0f / texture->width();
-        dims[2] = texture->width();
+        dims[0] = 1.0f / textureDims.width();
+        dims[2] = textureDims.width();
     }
     if (bicubicEffect.direction() != GrBicubicEffect::Direction::kX) {
-        dims[1] = 1.0f / texture->height();
-        dims[3] = texture->height();
+        dims[1] = 1.0f / textureDims.height();
+        dims[3] = textureDims.height();
     }
     pdman.set4fv(fDimensions, 1, dims);
-    fDomain.setData(pdman, bicubicEffect.domain(), proxy,
+    fDomain.setData(pdman, bicubicEffect.domain(), view,
                     processor.textureSampler(0).samplerState());
 }
 
-GrBicubicEffect::GrBicubicEffect(sk_sp<GrTextureProxy> proxy, const SkMatrix& matrix,
+GrBicubicEffect::GrBicubicEffect(sk_sp<GrSurfaceProxy> proxy, const SkMatrix& matrix,
                                  const SkRect& domain, const GrSamplerState::WrapMode wrapModes[2],
                                  GrTextureDomain::Mode modeX, GrTextureDomain::Mode modeY,
                                  Direction direction, SkAlphaType alphaType)
         : INHERITED{kGrBicubicEffect_ClassID,
                     ModulateForSamplerOptFlags(
-                            proxy->config(),
-                            GrTextureDomain::IsDecalSampled(wrapModes, modeX, modeY))}
+                            alphaType, GrTextureDomain::IsDecalSampled(wrapModes, modeX, modeY))}
         , fCoordTransform(matrix, proxy.get())
         , fDomain(proxy.get(), domain, modeX, modeY)
         , fTextureSampler(std::move(proxy),
@@ -209,11 +208,8 @@ GR_DEFINE_FRAGMENT_PROCESSOR_TEST(GrBicubicEffect);
 
 #if GR_TEST_UTILS
 std::unique_ptr<GrFragmentProcessor> GrBicubicEffect::TestCreate(GrProcessorTestData* d) {
-    int texIdx = d->fRandom->nextBool() ? GrProcessorUnitTest::kSkiaPMTextureIdx
-                                        : GrProcessorUnitTest::kAlphaTextureIdx;
     static const GrSamplerState::WrapMode kClampClamp[] = {GrSamplerState::WrapMode::kClamp,
                                                            GrSamplerState::WrapMode::kClamp};
-    SkAlphaType alphaType = d->fRandom->nextBool() ? kPremul_SkAlphaType : kUnpremul_SkAlphaType;
     Direction direction = Direction::kX;
     switch (d->fRandom->nextULessThan(3)) {
         case 0:
@@ -226,8 +222,8 @@ std::unique_ptr<GrFragmentProcessor> GrBicubicEffect::TestCreate(GrProcessorTest
             direction = Direction::kXY;
             break;
     }
-    return GrBicubicEffect::Make(d->textureProxy(texIdx), SkMatrix::I(), kClampClamp, direction,
-                                 alphaType);
+    auto [proxy, ct, at] = d->randomProxy();
+    return GrBicubicEffect::Make(proxy, SkMatrix::I(), kClampClamp, direction, at);
 }
 #endif
 

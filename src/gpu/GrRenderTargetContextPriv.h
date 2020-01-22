@@ -49,20 +49,6 @@ public:
 
     void clearStencilClip(const GrFixedClip&, bool insideStencilMask);
 
-    /*
-     * Some portions of the code, which use approximate-match rendertargets (i.e., ImageFilters),
-     * rely on clears that lie outside of the content region to still have an effect.
-     * For example, when sampling a decimated blurred image back up to full size, the GaussianBlur
-     * code draws 1-pixel rects along the left and bottom edges to be able to use bilerp for
-     * upsampling. The "absClear" entry point ignores the content bounds but does use the
-     * worst case (instantiated) bounds.
-     *
-     * This call will always clear to transparent black.
-     *
-     * @param rect      if (!null) the rect to clear, otherwise it is a full screen clear
-     */
-    void absClear(const SkIRect* rect);
-
     // While this can take a general clip, since GrReducedClip relies on this function, it must take
     // care to only provide hard clips or we could get stuck in a loop. The general clip is needed
     // so that path renderers can use this function.
@@ -102,7 +88,7 @@ public:
      * guaranteed to match the uniqueID of the underlying GrRenderTarget - beware!
      */
     GrSurfaceProxy::UniqueID uniqueID() const {
-        return fRenderTargetContext->fRenderTargetProxy->uniqueID();
+        return fRenderTargetContext->fSurfaceProxy->uniqueID();
     }
 
     uint32_t testingOnly_getOpsTaskID();
@@ -113,7 +99,7 @@ public:
                                const std::function<WillAddOpFn>& = std::function<WillAddOpFn>());
 
     bool refsWrappedObjects() const {
-        return fRenderTargetContext->fRenderTargetProxy->refsWrappedObjects();
+        return fRenderTargetContext->asRenderTargetProxy()->refsWrappedObjects();
     }
 
 private:

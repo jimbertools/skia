@@ -32,7 +32,6 @@
 #include "include/core/SkTextBlob.h"
 #include "include/effects/Sk1DPathEffect.h"
 #include "include/effects/Sk2DPathEffect.h"
-#include "include/effects/SkBlurMaskFilter.h"
 #include "include/effects/SkColorMatrixFilter.h"
 #include "include/effects/SkCornerPathEffect.h"
 #include "include/effects/SkDashPathEffect.h"
@@ -1666,7 +1665,7 @@ static void fuzz_ganesh(Fuzz* fuzz, GrContext* context) {
     auto surface = SkSurface::MakeRenderTarget(
             context,
             SkBudgeted::kNo,
-            SkImageInfo::Make(kCanvasSize.width(), kCanvasSize.height(), kRGBA_8888_SkColorType, kPremul_SkAlphaType));
+            SkImageInfo::Make(kCanvasSize, kRGBA_8888_SkColorType, kPremul_SkAlphaType));
     SkASSERT(surface && surface->getCanvas());
     fuzz_canvas(fuzz, surface->getCanvas());
 }
@@ -1705,7 +1704,7 @@ DEF_FUZZ(_DumpCanvas, fuzz) {
     SkDynamicMemoryWStream stream;
     SkJSONWriter writer(&stream, SkJSONWriter::Mode::kPretty);
     writer.beginObject(); // root
-    debugCanvas.toJSON(writer, dataManager, debugCanvas.getSize(), nullCanvas.get());
+    debugCanvas.toJSON(writer, dataManager, nullCanvas.get());
     writer.endObject(); // root
     writer.flush();
     sk_sp<SkData> json = stream.detachAsData();

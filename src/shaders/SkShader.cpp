@@ -15,6 +15,7 @@
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkTLazy.h"
+#include "src/core/SkVM.h"
 #include "src/core/SkWriteBuffer.h"
 #include "src/shaders/SkBitmapProcShader.h"
 #include "src/shaders/SkColorShader.h"
@@ -111,7 +112,12 @@ SkShaderBase::Context::Context(const SkShaderBase& shader, const ContextRec& rec
 SkShaderBase::Context::~Context() {}
 
 bool SkShaderBase::ContextRec::isLegacyCompatible(SkColorSpace* shaderColorSpace) const {
-    return !SkColorSpaceXformSteps::Required(shaderColorSpace, fDstColorSpace);
+    // In legacy pipelines, shaders always produce premul (or opaque) and the destination is also
+    // always premul (or opaque).  (And those "or opaque" caveats won't make any difference here.)
+    SkAlphaType shaderAT = kPremul_SkAlphaType,
+                   dstAT = kPremul_SkAlphaType;
+    return 0 == SkColorSpaceXformSteps{shaderColorSpace, shaderAT,
+                                         fDstColorSpace,    dstAT}.flags.mask();
 }
 
 SkImage* SkShader::isAImage(SkMatrix* localMatrix, SkTileMode xy[2]) const {
@@ -189,6 +195,42 @@ bool SkShaderBase::onAppendStages(const SkStageRec& rec) const {
             ->apply(rec.fPipeline, true);
         return true;
     }
+    return false;
+}
+
+bool SkShaderBase::program(skvm::Builder* p,
+                           const SkMatrix& ctm, const SkMatrix* localM,
+                           SkFilterQuality quality, SkColorSpace* dstCS,
+                           skvm::Uniforms* uniforms, SkArenaAlloc* alloc,
+                           skvm::F32 x, skvm::F32 y,
+                           skvm::F32* r, skvm::F32* g, skvm::F32* b, skvm::F32* a) const {
+    // Force opaque alpha for all opaque shaders.
+    //
+    // This is primarily nice in that we usually have a 1.0f constant splat
+    // somewhere in the program anyway, and this will let us drop the work the
+    // shader notionally does to produce alpha, p->extract(...), etc. in favor
+    // of that simple hoistable splat.
+    //
+    // More subtly, it makes isOpaque() a parameter to all shader program
+    // generation, guaranteeing that is-opaque bit is mixed into the overall
+    // shader program hash and blitter Key.  This makes it safe for us to use
+    // that bit to make decisions when constructing an SkVMBlitter, like doing
+    // SrcOver -> Src strength reduction.
+    if (this->onProgram(p, ctm,localM, quality,dstCS, uniforms,alloc, x,y, r,g,b,a)) {
+        if (this->isOpaque()) {
+            *a = p->splat(1.0f);
+        }
+        return true;
+    }
+    return false;
+}
+
+bool SkShaderBase::onProgram(skvm::Builder*,
+                             const SkMatrix& ctm, const SkMatrix* localM,
+                             SkFilterQuality quality, SkColorSpace* dstCS,
+                             skvm::Uniforms* uniforms, SkArenaAlloc* alloc,
+                             skvm::F32 x, skvm::F32 y,
+                             skvm::F32* r, skvm::F32* g, skvm::F32* b, skvm::F32* a) const {
     return false;
 }
 

@@ -6,7 +6,6 @@
  */
 
 #include "include/private/SkSemaphore.h"
-#include "src/core/SkMakeUnique.h"
 #include "src/core/SkTaskGroup.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/gpu/GrAuditTrail.h"
@@ -79,12 +78,12 @@ bool GrSoftwarePathRenderer::GetShapeAndClipBounds(GrRenderTargetContext* render
                                devClipBounds);
 
     if (!get_unclipped_shape_dev_bounds(shape, matrix, unclippedDevShapeBounds)) {
-        *unclippedDevShapeBounds = SkIRect::EmptyIRect();
-        *clippedDevShapeBounds = SkIRect::EmptyIRect();
+        *unclippedDevShapeBounds = SkIRect::MakeEmpty();
+        *clippedDevShapeBounds = SkIRect::MakeEmpty();
         return false;
     }
     if (!clippedDevShapeBounds->intersect(*devClipBounds, *unclippedDevShapeBounds)) {
-        *clippedDevShapeBounds = SkIRect::EmptyIRect();
+        *clippedDevShapeBounds = SkIRect::MakeEmpty();
         return false;
     }
     return true;
@@ -164,8 +163,8 @@ void GrSoftwarePathRenderer::DrawToTargetWithShapeMask(
     SkMatrix maskMatrix = SkMatrix::MakeTrans(SkIntToScalar(-textureOriginInDeviceSpace.fX),
                                               SkIntToScalar(-textureOriginInDeviceSpace.fY));
     maskMatrix.preConcat(viewMatrix);
-    paint.addCoverageFragmentProcessor(GrSimpleTextureEffect::Make(
-            std::move(proxy), maskMatrix, GrSamplerState::Filter::kNearest));
+    paint.addCoverageFragmentProcessor(GrTextureEffect::Make(
+            std::move(proxy), kPremul_SkAlphaType, maskMatrix, GrSamplerState::Filter::kNearest));
     DrawNonAARect(renderTargetContext, std::move(paint), userStencilSettings, clip, SkMatrix::I(),
                   dstRect, invert);
 }
@@ -343,7 +342,7 @@ bool GrSoftwarePathRenderer::onDrawPath(const DrawPathArgs& args) {
                 return false;
             }
 
-            auto uploader = skstd::make_unique<GrTDeferredProxyUploader<SoftwarePathData>>(
+            auto uploader = std::make_unique<GrTDeferredProxyUploader<SoftwarePathData>>(
                     *boundsForMask, *args.fViewMatrix, *args.fShape, aa);
             GrTDeferredProxyUploader<SoftwarePathData>* uploaderRaw = uploader.get();
 
@@ -385,10 +384,9 @@ bool GrSoftwarePathRenderer::onDrawPath(const DrawPathArgs& args) {
                           *args.fUserStencilSettings, *args.fClip, *args.fViewMatrix, devClipBounds,
                           unclippedDevShapeBounds);
     }
-    DrawToTargetWithShapeMask(
-            std::move(proxy), args.fRenderTargetContext, std::move(args.fPaint),
-            *args.fUserStencilSettings, *args.fClip, *args.fViewMatrix,
-            SkIPoint{boundsForMask->fLeft, boundsForMask->fTop}, *boundsForMask);
+    DrawToTargetWithShapeMask(std::move(proxy), args.fRenderTargetContext, std::move(args.fPaint),
+                              *args.fUserStencilSettings, *args.fClip, *args.fViewMatrix,
+                              SkIPoint{boundsForMask->fLeft, boundsForMask->fTop}, *boundsForMask);
 
     return true;
 }

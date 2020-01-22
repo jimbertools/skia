@@ -238,7 +238,8 @@ Google signing identity and provisioning profile. To use a different one set `sk
 to match your code signing identity and `skia_ios_profile` to the name of your provisioning
 profile, e.g. `skia_ios_identity=".*Jane Doe.*" skia_ios_profile="iPad Profile"`. A list of
 identities can be found by typing `security find-identity` on the command line. The name of the
-provisioning profile should be available on the Apple Developer site.
+provisioning profile should be available on the Apple Developer site. Alternatively,
+`skia_ios_profile` can be the absolute path to the mobileprovision file.
 
 For signed packages `ios-deploy` makes installing and running them on a device easy:
 
@@ -263,7 +264,7 @@ case, you can pass your `VC` path to GN via `win_vc`.
 Skia can be compiled with the free [Build Tools for Visual Studio 2017 or
 2019](https://www.visualstudio.com/downloads/#build-tools-for-visual-studio-2019).
 
-The bots use a packaged 2017 toolchain, which Googlers can download like this:
+The bots use a packaged 2019 toolchain, which Googlers can download like this:
 
     python2 infra/bots/assets/win_toolchain/download.py -t C:/toolchain
 

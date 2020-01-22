@@ -95,8 +95,8 @@ public:
     /*
      * Create a texture proxy from compressed texture data.
      */
-    sk_sp<GrTextureProxy> createCompressedTextureProxy(int width, int height, SkBudgeted budgeted,
-                                                       SkImage::CompressionType compressionType,
+    sk_sp<GrTextureProxy> createCompressedTextureProxy(SkISize dimensions, SkBudgeted,
+                                                       SkImage::CompressionType,
                                                        sk_sp<SkData> data);
 
     // These match the definitions in SkImage & GrTexture.h, for whence they came
@@ -110,6 +110,11 @@ public:
     sk_sp<GrTextureProxy> wrapBackendTexture(const GrBackendTexture&, GrColorType, GrSurfaceOrigin,
                                              GrWrapOwnership, GrWrapCacheable, GrIOType,
                                              ReleaseProc = nullptr, ReleaseContext = nullptr);
+
+    sk_sp<GrTextureProxy> wrapCompressedBackendTexture(const GrBackendTexture&, GrSurfaceOrigin,
+                                                       GrWrapOwnership, GrWrapCacheable,
+                                                       ReleaseProc = nullptr,
+                                                       ReleaseContext = nullptr);
 
     /*
      * Create a texture proxy that wraps a backend texture and is both texture-able and renderable
@@ -200,10 +205,6 @@ public:
                                                     const GrCaps&,
                                                     UseAllocator);
 
-    // 'proxy' is about to be used as a texture src or drawn to. This query can be used to
-    // determine if it is going to need a texture domain or a full clear.
-    static bool IsFunctionallyExact(GrSurfaceProxy* proxy);
-
     enum class InvalidateGPUResource : bool { kNo = false, kYes = true };
 
     /*
@@ -246,7 +247,7 @@ public:
      * Create a texture proxy that is backed by an instantiated GrSurface.
      * TODO: Remove GrColorType. Currently used to infer a GrPixelConfig.
      */
-    sk_sp<GrTextureProxy> testingOnly_createInstantiatedProxy(const SkISize& size,
+    sk_sp<GrTextureProxy> testingOnly_createInstantiatedProxy(const SkISize& dimensions,
                                                               GrColorType colorType,
                                                               const GrBackendFormat& format,
                                                               GrRenderable renderable,
@@ -257,7 +258,7 @@ public:
                                                               GrProtected isProtected);
 
     /** Version of above that picks the default format for the color type. */
-    sk_sp<GrTextureProxy> testingOnly_createInstantiatedProxy(const SkISize& size,
+    sk_sp<GrTextureProxy> testingOnly_createInstantiatedProxy(const SkISize& dimensions,
                                                               GrColorType colorType,
                                                               GrRenderable renderable,
                                                               int renderTargetSampleCnt,

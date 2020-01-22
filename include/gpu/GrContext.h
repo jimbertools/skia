@@ -21,6 +21,7 @@
 class GrAtlasManager;
 class GrBackendSemaphore;
 class GrCaps;
+class GrClientMappedBufferManager;
 class GrContextPriv;
 class GrContextThreadSafeProxy;
 class GrFragmentProcessor;
@@ -32,7 +33,6 @@ class GrRenderTargetContext;
 class GrResourceCache;
 class GrResourceProvider;
 class GrSamplerState;
-class GrSkSLFPFactoryCache;
 class GrSurfaceProxy;
 class GrSwizzle;
 class GrTextContext;
@@ -56,6 +56,10 @@ public:
     static sk_sp<GrContext> MakeGL(const GrContextOptions&);
     static sk_sp<GrContext> MakeGL();
 
+    /**
+     * The Vulkan context (VkQueue, VkDevice, VkInstance) must be kept alive unitl the returned
+     * GrContext is first destroyed or abandoned.
+     */
     static sk_sp<GrContext> MakeVulkan(const GrVkBackendContext&, const GrContextOptions&);
     static sk_sp<GrContext> MakeVulkan(const GrVkBackendContext&);
 
@@ -71,8 +75,8 @@ public:
 #endif
 
 #ifdef SK_DAWN
-    static sk_sp<GrContext> MakeDawn(const dawn::Device& device, const GrContextOptions& options);
-    static sk_sp<GrContext> MakeDawn(const dawn::Device& device);
+    static sk_sp<GrContext> MakeDawn(const wgpu::Device& device, const GrContextOptions& options);
+    static sk_sp<GrContext> MakeDawn(const wgpu::Device& device);
 #endif
 
     static sk_sp<GrContext> MakeMock(const GrMockOptions*, const GrContextOptions&);
@@ -113,6 +117,9 @@ public:
      *
      * The typical use case for this function is that the underlying 3D context was lost and further
      * API calls may crash.
+     *
+     * For Vulkan, even if the device becomes lost, the VkQueue, VkDevice, or VkInstance used to
+     * create the GrContext must be alive before calling abandonContext.
      */
     void abandonContext() override;
 
@@ -129,6 +136,9 @@ public:
      * The typical use case for this function is that the client is going to destroy the 3D context
      * but can't guarantee that GrContext will be destroyed first (perhaps because it may be ref'ed
      * elsewhere by either the client or Skia objects).
+     *
+     * For Vulkan, even if the device becomes lost, the VkQueue, VkDevice, or VkInstance used to
+     * create the GrContext must be alive before calling releaseResourcesAndAbandonContext.
      */
     virtual void releaseResourcesAndAbandonContext();
 
@@ -247,7 +257,13 @@ public:
      * use maxSurfaceSampleCountForColorType().
      */
     bool colorTypeSupportedAsSurface(SkColorType colorType) const {
-        if (kRG_88_SkColorType == colorType) {
+        if (kR8G8_unorm_SkColorType == colorType ||
+            kR16G16_unorm_SkColorType == colorType ||
+            kA16_unorm_SkColorType == colorType ||
+            kA16_float_SkColorType == colorType ||
+            kR16G16_float_SkColorType == colorType ||
+            kR16G16B16A16_unorm_SkColorType == colorType ||
+            kGray_8_SkColorType == colorType) {
             return false;
         }
 
@@ -357,8 +373,10 @@ public:
 
     void storeVkPipelineCacheData();
 
-    static size_t ComputeTextureSize(SkColorType type, int width, int height, GrMipMapped,
-                                     bool useNextPow2 = false);
+    // Returns the gpu memory size of the the texture that backs the passed in SkImage. Returns 0 if
+    // the SkImage is not texture backed. For external format textures this will also return 0 as we
+    // cannot determine the correct size.
+    static size_t ComputeImageSize(sk_sp<SkImage> image, GrMipMapped, bool useNextPow2 = false);
 
     /*
      * Retrieve the default GrBackendFormat for a given SkColorType and renderability.
@@ -376,8 +394,9 @@ public:
     * objects outside of Skia proper (i.e., Skia's caching system will not know about them.)
     *
     * It is the client's responsibility to delete all these objects (using deleteBackendTexture)
-    * before deleting the GrContext used to create them. Additionally, clients should only
-    * delete these objects on the thread for which that GrContext is active.
+    * before deleting the GrContext used to create them. If the backend is Vulkan, the textures must
+    * be deleted before abandoning the GrContext as well. Additionally, clients should only delete
+    * these objects on the thread for which that GrContext is active.
     *
     * The client is responsible for ensuring synchronization between different uses
     * of the backend object (i.e., wrapping it in a surface, rendering to it, deleting the
@@ -449,6 +468,74 @@ public:
     GrBackendTexture createBackendTexture(const SkSurfaceCharacterization& characterization,
                                           const SkColor4f& color);
 
+    // If possible, create a backend texture initialized with the provided pixmap data. The client
+    // should ensure that the returned backend texture is valid.
+    // If successful, the created backend texture will be compatible with the provided
+    // pixmap(s). Compatible, in this case, means that the backend format will be the result
+    // of calling defaultBackendFormat on the base pixmap's colortype.
+    // If numLevels is 1 a non-mipMapped texture will result. If a mipMapped texture is desired
+    // the data for all the mipmap levels must be provided. In the mipmapped case all the
+    // colortypes of the provided pixmaps must be the same. Additionally, all the miplevels
+    // must be sized correctly (please see SkMipMap::ComputeLevelSize and ComputeLevelCount).
+    // Note: the pixmap's alphatypes and colorspaces are ignored.
+    // For the Vulkan backend the layout of the created VkImage will be:
+    //      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    // regardless of the renderability setting
+    GrBackendTexture createBackendTexture(const SkPixmap srcData[], int numLevels,
+                                          GrRenderable, GrProtected);
+
+    // Helper version of above for a single level.
+    GrBackendTexture createBackendTexture(const SkPixmap& srcData,
+                                          GrRenderable renderable,
+                                          GrProtected isProtected) {
+        return this->createBackendTexture(&srcData, 1, renderable, isProtected);
+    }
+
+    /*
+     * Retrieve the GrBackendFormat for a given SkImage::CompressionType. This is
+     * guaranteed to match the backend format used by the following
+     * createCompressedsBackendTexture methods that take a CompressionType.
+     * The caller should check that the returned format is valid.
+     */
+    GrBackendFormat compressedBackendFormat(SkImage::CompressionType compression) const {
+        return INHERITED::compressedBackendFormat(compression);
+    }
+
+    // If possible, create a compressed backend texture initialized to a particular color. The
+    // client should ensure that the returned backend texture is valid.
+    // For the Vulkan backend the layout of the created VkImage will be:
+    //      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    GrBackendTexture createCompressedBackendTexture(int width, int height,
+                                                    const GrBackendFormat&,
+                                                    const SkColor4f& color,
+                                                    GrMipMapped,
+                                                    GrProtected = GrProtected::kNo);
+
+    GrBackendTexture createCompressedBackendTexture(int width, int height,
+                                                    SkImage::CompressionType,
+                                                    const SkColor4f& color,
+                                                    GrMipMapped,
+                                                    GrProtected = GrProtected::kNo);
+
+    // If possible, create a backend texture initialized with the provided raw data. The client
+    // should ensure that the returned backend texture is valid.
+    // If numLevels is 1 a non-mipMapped texture will result. If a mipMapped texture is desired
+    // the data for all the mipmap levels must be provided. Additionally, all the miplevels
+    // must be sized correctly (please see SkMipMap::ComputeLevelSize and ComputeLevelCount).
+    // For the Vulkan backend the layout of the created VkImage will be:
+    //      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    GrBackendTexture createCompressedBackendTexture(int width, int height,
+                                                    const GrBackendFormat&,
+                                                    const void* data, size_t dataSize,
+                                                    GrMipMapped,
+                                                    GrProtected = GrProtected::kNo);
+
+    GrBackendTexture createCompressedBackendTexture(int width, int height,
+                                                    SkImage::CompressionType,
+                                                    const void* data, size_t dataSize,
+                                                    GrMipMapped,
+                                                    GrProtected = GrProtected::kNo);
+
     void deleteBackendTexture(GrBackendTexture);
 
     // This interface allows clients to pre-compile shaders and populate the runtime program cache.
@@ -478,7 +565,7 @@ public:
 protected:
     GrContext(GrBackendApi, const GrContextOptions&, int32_t contextID = SK_InvalidGenID);
 
-    bool init(sk_sp<const GrCaps>, sk_sp<GrSkSLFPFactoryCache>) override;
+    bool init(sk_sp<const GrCaps>) override;
 
     GrContext* asDirectContext() override { return this; }
 
@@ -503,15 +590,10 @@ private:
     GrContextOptions::PersistentCache*      fPersistentCache;
     GrContextOptions::ShaderErrorHandler*   fShaderErrorHandler;
 
+    std::unique_ptr<GrClientMappedBufferManager> fMappedBufferManager;
+
     // TODO: have the GrClipStackClip use renderTargetContexts and rm this friending
     friend class GrContextPriv;
-
-    /**
-     * These functions create premul <-> unpremul effects, using the specialized round-trip effects
-     * from GrConfigConversionEffect.
-     */
-    std::unique_ptr<GrFragmentProcessor> createPMToUPMEffect(std::unique_ptr<GrFragmentProcessor>);
-    std::unique_ptr<GrFragmentProcessor> createUPMToPMEffect(std::unique_ptr<GrFragmentProcessor>);
 
     typedef GrRecordingContext INHERITED;
 };

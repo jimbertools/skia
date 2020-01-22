@@ -288,10 +288,10 @@ static void test_bounds(skiatest::Reporter* reporter,
             bool doInvA = SkToBool(invBits & 1);
             bool doInvB = SkToBool(invBits & 2);
 
-            pathA.setFillType(doInvA ? SkPath::kInverseEvenOdd_FillType :
-                                       SkPath::kEvenOdd_FillType);
-            pathB.setFillType(doInvB ? SkPath::kInverseEvenOdd_FillType :
-                                       SkPath::kEvenOdd_FillType);
+            pathA.setFillType(doInvA ? SkPathFillType::kInverseEvenOdd :
+                                       SkPathFillType::kEvenOdd);
+            pathB.setFillType(doInvB ? SkPathFillType::kInverseEvenOdd :
+                                       SkPathFillType::kEvenOdd);
 
             switch (primType) {
                 case SkClipStack::Element::DeviceSpaceType::kEmpty:
@@ -362,10 +362,10 @@ static void test_isWideOpen(skiatest::Reporter* reporter) {
         SkPath clipA, clipB;
 
         clipA.addRoundRect(rectA, SkIntToScalar(5), SkIntToScalar(5));
-        clipA.setFillType(SkPath::kInverseEvenOdd_FillType);
+        clipA.setFillType(SkPathFillType::kInverseEvenOdd);
 
         clipB.addRoundRect(rectB, SkIntToScalar(5), SkIntToScalar(5));
-        clipB.setFillType(SkPath::kInverseEvenOdd_FillType);
+        clipB.setFillType(SkPathFillType::kInverseEvenOdd);
 
         stack.clipPath(clipA, SkMatrix::I(), kReplace_SkClipOp, false);
         stack.clipPath(clipB, SkMatrix::I(), kUnion_SkClipOp, false);
@@ -856,7 +856,7 @@ static void test_invfill_diff_bug(skiatest::Reporter* reporter) {
 
     SkPath path;
     path.addRect({30, 10, 40, 20});
-    path.setFillType(SkPath::kInverseWinding_FillType);
+    path.setFillType(SkPathFillType::kInverseWinding);
     stack.clipPath(path, SkMatrix::I(), kDifference_SkClipOp, false);
 
     REPORTER_ASSERT(reporter, SkClipStack::kEmptyGenID == stack.getTopmostGenID());
@@ -893,7 +893,7 @@ static void add_round_rect(const SkRect& rect, bool invert, SkClipOp op, SkClipS
     if (invert) {
         SkPath path;
         path.addRoundRect(rect, rx, ry);
-        path.setFillType(SkPath::kInverseWinding_FillType);
+        path.setFillType(SkPathFillType::kInverseWinding);
         stack->clipPath(path, SkMatrix::I(), op, doAA);
     } else {
         SkRRect rrect;
@@ -907,7 +907,7 @@ static void add_rect(const SkRect& rect, bool invert, SkClipOp op, SkClipStack* 
     if (invert) {
         SkPath path;
         path.addRect(rect);
-        path.setFillType(SkPath::kInverseWinding_FillType);
+        path.setFillType(SkPathFillType::kInverseWinding);
         stack->clipPath(path, SkMatrix::I(), op, doAA);
     } else {
         stack->clipRect(rect, SkMatrix::I(), op, doAA);
@@ -919,7 +919,7 @@ static void add_oval(const SkRect& rect, bool invert, SkClipOp op, SkClipStack* 
     SkPath path;
     path.addOval(rect);
     if (invert) {
-        path.setFillType(SkPath::kInverseWinding_FillType);
+        path.setFillType(SkPathFillType::kInverseWinding);
     }
     stack->clipPath(path, SkMatrix::I(), op, doAA);
 };
@@ -1048,7 +1048,7 @@ static void test_reduced_clip_stack(skiatest::Reporter* reporter) {
         // will be kInvalidGenID if left uninitialized.
         SkAlignedSTStorage<1, GrReducedClip> storage;
         memset(storage.get(), 0, sizeof(GrReducedClip));
-        GR_STATIC_ASSERT(0 == SkClipStack::kInvalidGenID);
+        static_assert(0 == SkClipStack::kInvalidGenID);
 
         // Get the reduced version of the stack.
         SkRect queryBounds = kBounds;
@@ -1117,7 +1117,7 @@ static void test_reduced_clip_stack_genid(skiatest::Reporter* reporter) {
 
         SkAlignedSTStorage<1, GrReducedClip> storage;
         memset(storage.get(), 0, sizeof(GrReducedClip));
-        GR_STATIC_ASSERT(0 == SkClipStack::kInvalidGenID);
+        static_assert(0 == SkClipStack::kInvalidGenID);
         const GrReducedClip* reduced = new (storage.get()) GrReducedClip(stack, bounds, caps);
 
         REPORTER_ASSERT(reporter, reduced->maskElements().count() == 1);
@@ -1534,7 +1534,7 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(ClipMaskCache, reporter, ctxInfo) {
     SkPath path;
     path.addCircle(10, 10, 8);
     path.addCircle(15, 15, 8);
-    path.setFillType(SkPath::kEvenOdd_FillType);
+    path.setFillType(SkPathFillType::kEvenOdd);
 
     static const char* kTag = GrClipStackClip::kMaskTestTag;
     GrResourceCache* cache = context->priv().getResourceCache();
@@ -1562,33 +1562,4 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(ClipMaskCache, reporter, ctxInfo) {
         REPORTER_ASSERT(reporter, kN - (i + 1) == cache->countUniqueKeysWithTag(kTag));
     }
 #endif
-}
-
-DEF_GPUTEST_FOR_ALL_CONTEXTS(canvas_private_clipRgn, reporter, ctxInfo) {
-    GrContext* context = ctxInfo.grContext();
-
-    const int w = 10;
-    const int h = 10;
-    SkImageInfo info = SkImageInfo::Make(w, h, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
-    sk_sp<SkSurface> surf = SkSurface::MakeRenderTarget(context, SkBudgeted::kNo, info);
-    SkCanvas* canvas = surf->getCanvas();
-    SkRegion rgn;
-
-    canvas->temporary_internal_getRgnClip(&rgn);
-    REPORTER_ASSERT(reporter, rgn.isRect());
-    REPORTER_ASSERT(reporter, rgn.getBounds() == SkIRect::MakeWH(w, h));
-
-    canvas->save();
-    canvas->clipRect(SkRect::MakeWH(5, 5), kDifference_SkClipOp);
-    canvas->temporary_internal_getRgnClip(&rgn);
-    REPORTER_ASSERT(reporter, rgn.isComplex());
-    REPORTER_ASSERT(reporter, rgn.getBounds() == SkIRect::MakeWH(w, h));
-    canvas->restore();
-
-    canvas->save();
-    canvas->clipRRect(SkRRect::MakeOval(SkRect::MakeLTRB(3, 3, 7, 7)));
-    canvas->temporary_internal_getRgnClip(&rgn);
-    REPORTER_ASSERT(reporter, rgn.isComplex());
-    REPORTER_ASSERT(reporter, rgn.getBounds() == SkIRect::MakeLTRB(3, 3, 7, 7));
-    canvas->restore();
 }

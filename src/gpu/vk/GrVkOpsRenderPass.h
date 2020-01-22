@@ -32,16 +32,14 @@ public:
     void begin() override { }
     void end() override;
 
-    void insertEventMarker(const char*) override;
-
     void inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) override;
 
     void executeDrawable(std::unique_ptr<SkDrawable::GpuDrawHandler>) override;
 
-    void set(GrRenderTarget*, GrSurfaceOrigin,
+    bool set(GrRenderTarget*, GrSurfaceOrigin, const SkIRect& bounds,
              const GrOpsRenderPass::LoadAndStoreInfo&,
              const GrOpsRenderPass::StencilLoadAndStoreInfo&,
-             const SkTArray<GrTextureProxy*, true>& sampledProxies);
+             const SkTArray<GrSurfaceProxy*, true>& sampledProxies);
     void reset();
 
     void submit();
@@ -51,13 +49,13 @@ public:
 #endif
 
 private:
-    void init(const GrOpsRenderPass::LoadAndStoreInfo&,
+    bool init(const GrOpsRenderPass::LoadAndStoreInfo&,
               const GrOpsRenderPass::StencilLoadAndStoreInfo&,
               const SkPMColor4f& clearColor);
 
     // Called instead of init when we are drawing to a render target that already wraps a secondary
     // command buffer.
-    void initWrapped();
+    bool initWrapped();
 
     bool wrapsSecondaryCommandBuffer() const;
 
@@ -70,52 +68,33 @@ private:
                       const GrGpuBuffer* vertexBuffer,
                       const GrGpuBuffer* instanceBuffer);
 
-    GrVkPipelineState* prepareDrawState(const GrPrimitiveProcessor&,
-                                        const GrPipeline&,
-                                        const GrPipeline::FixedDynamicState*,
-                                        const GrPipeline::DynamicStateArrays*,
-                                        GrPrimitiveType);
+    GrVkPipelineState* prepareDrawState(const GrProgramInfo&, const SkIRect& renderPassScissorRect);
 
-    void onDraw(const GrPrimitiveProcessor&,
-                const GrPipeline&,
-                const GrPipeline::FixedDynamicState*,
-                const GrPipeline::DynamicStateArrays*,
-                const GrMesh[],
-                int meshCount,
+    void onDraw(const GrProgramInfo&, const GrMesh[], int meshCount,
                 const SkRect& bounds) override;
 
     // GrMesh::SendToGpuImpl methods. These issue the actual Vulkan draw commands.
     // Marked final as a hint to the compiler to not use virtual dispatch.
-    void sendMeshToGpu(GrPrimitiveType primType, const GrBuffer* vertexBuffer, int vertexCount,
-                       int baseVertex) final {
-        this->sendInstancedMeshToGpu(primType, vertexBuffer, vertexCount, baseVertex, nullptr, 1,
-                                     0);
+    void sendArrayMeshToGpu(const GrMesh& mesh, int vertexCount, int baseVertex) final {
+        SkASSERT(!mesh.instanceBuffer());
+        this->sendInstancedMeshToGpu(mesh, vertexCount, baseVertex, 1, 0);
     }
-
-    void sendIndexedMeshToGpu(GrPrimitiveType primType, const GrBuffer* indexBuffer, int indexCount,
-                              int baseIndex, uint16_t /*minIndexValue*/, uint16_t /*maxIndexValue*/,
-                              const GrBuffer* vertexBuffer, int baseVertex,
-                              GrPrimitiveRestart restart) final {
-        SkASSERT(restart == GrPrimitiveRestart::kNo);
-        this->sendIndexedInstancedMeshToGpu(primType, indexBuffer, indexCount, baseIndex,
-                                            vertexBuffer, baseVertex, nullptr, 1, 0,
-                                            GrPrimitiveRestart::kNo);
+    void sendIndexedMeshToGpu(const GrMesh& mesh, int indexCount, int baseIndex,
+                              uint16_t minIndexValue, uint16_t maxIndexValue,
+                              int baseVertex) final {
+        SkASSERT(!mesh.instanceBuffer());
+        this->sendIndexedInstancedMeshToGpu(mesh, indexCount, baseIndex, baseVertex, 1, 0);
     }
-
-    void sendInstancedMeshToGpu(GrPrimitiveType, const GrBuffer* vertexBuffer, int vertexCount,
-                                int baseVertex, const GrBuffer* instanceBuffer, int instanceCount,
+    void sendInstancedMeshToGpu(const GrMesh&, int vertexCount, int baseVertex, int instanceCount,
                                 int baseInstance) final;
-
-    void sendIndexedInstancedMeshToGpu(GrPrimitiveType, const GrBuffer* indexBuffer, int indexCount,
-                                       int baseIndex, const GrBuffer* vertexBuffer, int baseVertex,
-                                       const GrBuffer* instanceBuffer, int instanceCount,
-                                       int baseInstance, GrPrimitiveRestart) final;
+    void sendIndexedInstancedMeshToGpu(const GrMesh&, int indexCount, int baseIndex, int baseVertex,
+                                       int instanceCount, int baseInstance) final;
 
     void onClear(const GrFixedClip&, const SkPMColor4f& color) override;
 
     void onClearStencilClip(const GrFixedClip&, bool insideStencilMask) override;
 
-    void addAdditionalRenderPass();
+    void addAdditionalRenderPass(bool mustUseSecondaryCommandBuffer);
 
     std::unique_ptr<GrVkSecondaryCommandBuffer> fCurrentSecondaryCommandBuffer;
     const GrVkRenderPass*                       fCurrentRenderPass;

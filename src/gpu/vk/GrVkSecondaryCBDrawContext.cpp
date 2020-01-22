@@ -83,13 +83,13 @@ bool GrVkSecondaryCBDrawContext::characterize(SkSurfaceCharacterization* charact
     // We current don't support textured GrVkSecondaryCBDrawContexts.
     SkASSERT(!rtc->asTextureProxy());
 
-    SkColorType ct = GrColorTypeToSkColorType(rtc->colorSpaceInfo().colorType());
+    SkColorType ct = GrColorTypeToSkColorType(rtc->colorInfo().colorType());
     if (ct == kUnknown_SkColorType) {
         return false;
     }
 
     SkImageInfo ii = SkImageInfo::Make(rtc->width(), rtc->height(), ct, kPremul_SkAlphaType,
-                                       rtc->colorSpaceInfo().refColorSpace());
+                                       rtc->colorInfo().refColorSpace());
 
     GrBackendFormat format = rtc->asRenderTargetProxy()->backendFormat();
 
@@ -99,7 +99,7 @@ bool GrVkSecondaryCBDrawContext::characterize(SkSurfaceCharacterization* charact
                           SkSurfaceCharacterization::MipMapped(false),
                           SkSurfaceCharacterization::UsesGLFBO0(false),
                           SkSurfaceCharacterization::VulkanSecondaryCBCompatible(true),
-                          GrProtected(rtc->asRenderTargetProxy()->isProtected()),
+                          rtc->asRenderTargetProxy()->isProtected(),
                           this->props());
 
     return true;
@@ -132,13 +132,13 @@ bool GrVkSecondaryCBDrawContext::isCompatible(
         return false;
     }
 
-    SkColorType rtColorType = GrColorTypeToSkColorType(rtc->colorSpaceInfo().colorType());
+    SkColorType rtColorType = GrColorTypeToSkColorType(rtc->colorInfo().colorType());
     if (rtColorType == kUnknown_SkColorType) {
         return false;
     }
 
     GrBackendFormat rtcFormat = rtc->asRenderTargetProxy()->backendFormat();
-    GrProtected isProtected = GrProtected(rtc->asRenderTargetProxy()->isProtected());
+    GrProtected isProtected = rtc->asRenderTargetProxy()->isProtected();
 
     return characterization.contextInfo() && characterization.contextInfo()->priv().matches(ctx) &&
            characterization.cacheMaxResourceBytes() <= maxResourceBytes &&
@@ -148,8 +148,7 @@ bool GrVkSecondaryCBDrawContext::isCompatible(
            characterization.height() == rtc->height() &&
            characterization.colorType() == rtColorType &&
            characterization.sampleCount() == rtc->numSamples() &&
-           SkColorSpace::Equals(characterization.colorSpace(),
-                                rtc->colorSpaceInfo().colorSpace()) &&
+           SkColorSpace::Equals(characterization.colorSpace(), rtc->colorInfo().colorSpace()) &&
            characterization.isProtected() == isProtected &&
            characterization.surfaceProps() == rtc->surfaceProps();
 }

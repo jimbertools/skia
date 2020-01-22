@@ -12,7 +12,6 @@
 #include "include/core/SkString.h"
 #include "include/core/SkUnPreMultiply.h"
 #include "src/core/SkArenaAlloc.h"
-#include "src/core/SkMakeUnique.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkWriteBuffer.h"
 
@@ -738,7 +737,7 @@ public:
     bool stitchTiles() const { return fStitchTiles; }
     const SkVector& baseFrequency() const { return fPaintingData->fBaseFrequency; }
     int numOctaves() const { return fNumOctaves; }
-    const SkMatrix& matrix() const { return fCoordTransform.getMatrix(); }
+    const SkMatrix& matrix() const { return fCoordTransform.matrix(); }
 
 private:
     GrGLSLFragmentProcessor* onCreateGLSLInstance() const override {
@@ -917,8 +916,7 @@ void GrGLPerlinNoise::emitCode(EmitArgs& args) {
         xCoords.appendf("half2(%s.x, 0.5)", floorVal);
 
         noiseCode.appendf("\n\thalf2 %s;\n\t%s.x = ", latticeIdx, latticeIdx);
-        fragBuilder->appendTextureLookup(&noiseCode, args.fTexSamplers[0], xCoords.c_str(),
-                                         kHalf2_GrSLType);
+        fragBuilder->appendTextureLookup(&noiseCode, args.fTexSamplers[0], xCoords.c_str());
         noiseCode.append(".r;");
     }
 
@@ -928,8 +926,7 @@ void GrGLPerlinNoise::emitCode(EmitArgs& args) {
         xCoords.appendf("half2(%s.z, 0.5)", floorVal);
 
         noiseCode.appendf("\n\t%s.y = ", latticeIdx);
-        fragBuilder->appendTextureLookup(&noiseCode, args.fTexSamplers[0], xCoords.c_str(),
-                                         kHalf2_GrSLType);
+        fragBuilder->appendTextureLookup(&noiseCode, args.fTexSamplers[0], xCoords.c_str());
         noiseCode.append(".r;");
     }
 
@@ -953,8 +950,7 @@ void GrGLPerlinNoise::emitCode(EmitArgs& args) {
         SkString latticeCoords("");
         latticeCoords.appendf("half2(%s.x, %s)", bcoords, chanCoord);
         noiseCode.appendf("\n\thalf4 %s = ", lattice);
-        fragBuilder->appendTextureLookup(&noiseCode, args.fTexSamplers[1], latticeCoords.c_str(),
-                                         kHalf2_GrSLType);
+        fragBuilder->appendTextureLookup(&noiseCode, args.fTexSamplers[1], latticeCoords.c_str());
         noiseCode.appendf(".bgra;\n\t%s.x = ", uv);
         noiseCode.appendf(dotLattice, lattice, lattice, inc8bit, fractVal);
     }
@@ -965,8 +961,7 @@ void GrGLPerlinNoise::emitCode(EmitArgs& args) {
         SkString latticeCoords("");
         latticeCoords.appendf("half2(%s.y, %s)", bcoords, chanCoord);
         noiseCode.append("\n\tlattice = ");
-        fragBuilder->appendTextureLookup(&noiseCode, args.fTexSamplers[1], latticeCoords.c_str(),
-                                         kHalf2_GrSLType);
+        fragBuilder->appendTextureLookup(&noiseCode, args.fTexSamplers[1], latticeCoords.c_str());
         noiseCode.appendf(".bgra;\n\t%s.y = ", uv);
         noiseCode.appendf(dotLattice, lattice, lattice, inc8bit, fractVal);
     }
@@ -981,8 +976,7 @@ void GrGLPerlinNoise::emitCode(EmitArgs& args) {
         SkString latticeCoords("");
         latticeCoords.appendf("half2(%s.w, %s)", bcoords, chanCoord);
         noiseCode.append("\n\tlattice = ");
-        fragBuilder->appendTextureLookup(&noiseCode, args.fTexSamplers[1], latticeCoords.c_str(),
-                                         kHalf2_GrSLType);
+        fragBuilder->appendTextureLookup(&noiseCode, args.fTexSamplers[1], latticeCoords.c_str());
         noiseCode.appendf(".bgra;\n\t%s.y = ", uv);
         noiseCode.appendf(dotLattice, lattice, lattice, inc8bit, fractVal);
     }
@@ -993,8 +987,7 @@ void GrGLPerlinNoise::emitCode(EmitArgs& args) {
         SkString latticeCoords("");
         latticeCoords.appendf("half2(%s.z, %s)", bcoords, chanCoord);
         noiseCode.append("\n\tlattice = ");
-        fragBuilder->appendTextureLookup(&noiseCode, args.fTexSamplers[1], latticeCoords.c_str(),
-                                         kHalf2_GrSLType);
+        fragBuilder->appendTextureLookup(&noiseCode, args.fTexSamplers[1], latticeCoords.c_str());
         noiseCode.appendf(".bgra;\n\t%s.x = ", uv);
         noiseCode.appendf(dotLattice, lattice, lattice, inc8bit, fractVal);
     }
@@ -1166,7 +1159,7 @@ public:
     const SkVector& baseFrequency() const { return fPaintingData->fBaseFrequency; }
     SkScalar z() const { return fZ; }
     int octaves() const { return fOctaves; }
-    const SkMatrix& matrix() const { return fCoordTransform.getMatrix(); }
+    const SkMatrix& matrix() const { return fCoordTransform.matrix(); }
 
 private:
     GrGLSLFragmentProcessor* onCreateGLSLInstance() const override {
@@ -1281,8 +1274,8 @@ void GrGLImprovedPerlinNoise::emitCode(EmitArgs& args) {
     SkString permCode("return ");
     // FIXME even though I'm creating these textures with kRepeat_TileMode, they're clamped. Not
     // sure why. Using fract() (here and the next texture lookup) as a workaround.
-    fragBuilder->appendTextureLookup(&permCode, args.fTexSamplers[0], "float2(fract(x / 256.0), 0.0)",
-                                     kHalf2_GrSLType);
+    fragBuilder->appendTextureLookup(&permCode, args.fTexSamplers[0],
+                                     "float2(fract(x / 256.0), 0.0)");
     permCode.append(".r * 255.0;");
     fragBuilder->emitFunction(kHalf_GrSLType, "perm", SK_ARRAY_COUNT(permArgs), permArgs,
                               permCode.c_str(), &permFuncName);
@@ -1294,8 +1287,8 @@ void GrGLImprovedPerlinNoise::emitCode(EmitArgs& args) {
     };
     SkString gradFuncName;
     SkString gradCode("return half(dot(");
-    fragBuilder->appendTextureLookup(&gradCode, args.fTexSamplers[1], "float2(fract(x / 16.0), 0.0)",
-                                     kHalf2_GrSLType);
+    fragBuilder->appendTextureLookup(&gradCode, args.fTexSamplers[1],
+                                     "float2(fract(x / 16.0), 0.0)");
     gradCode.append(".rgb * 255.0 - float3(1.0), p));");
     fragBuilder->emitFunction(kHalf_GrSLType, "grad", SK_ARRAY_COUNT(gradArgs), gradArgs,
                               gradCode.c_str(), &gradFuncName);
@@ -1414,7 +1407,7 @@ std::unique_ptr<GrFragmentProcessor> SkPerlinNoiseShaderImpl::asFragmentProcesso
     SkASSERT(!fStitchTiles || !fTileSize.isEmpty());
 
     std::unique_ptr<SkPerlinNoiseShaderImpl::PaintingData> paintingData =
-        skstd::make_unique<SkPerlinNoiseShaderImpl::PaintingData>(fTileSize,
+        std::make_unique<SkPerlinNoiseShaderImpl::PaintingData>(fTileSize,
                                                                   fSeed,
                                                                   fBaseFrequencyX,
                                                                   fBaseFrequencyY,

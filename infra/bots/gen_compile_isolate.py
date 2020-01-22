@@ -22,6 +22,7 @@ PATH_PATTERNS = [
   r'.*\.gn$',
   r'.*\.gni$',
   r'.*\.h$',
+  r'.*\.mm$',
   r'.*\.storyboard$',
 ]
 
@@ -40,7 +41,6 @@ EXPLICIT_PATHS = [
   'infra/bots/assets/cast_toolchain/VERSION',
   'infra/bots/assets/clang_linux/VERSION',
   'infra/bots/assets/clang_win/VERSION',
-  'infra/bots/assets/mips64el_toolchain_linux/VERSION',
   'infra/canvaskit',
   'infra/pathkit',
   'resources',

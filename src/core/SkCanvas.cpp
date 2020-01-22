@@ -22,6 +22,7 @@
 #include "include/utils/SkNoDrawCanvas.h"
 #include "src/core/SkArenaAlloc.h"
 #include "src/core/SkBitmapDevice.h"
+#include "src/core/SkCanvasMatrix.h"
 #include "src/core/SkCanvasPriv.h"
 #include "src/core/SkClipOpPriv.h"
 #include "src/core/SkClipStack.h"
@@ -31,7 +32,6 @@
 #include "src/core/SkImageFilter_Base.h"
 #include "src/core/SkLatticeIter.h"
 #include "src/core/SkMSAN.h"
-#include "src/core/SkMakeUnique.h"
 #include "src/core/SkMatrixUtils.h"
 #include "src/core/SkPaintPriv.h"
 #include "src/core/SkRasterClip.h"
@@ -53,6 +53,10 @@
 
 #define RETURN_ON_NULL(ptr)     do { if (nullptr == (ptr)) return; } while (0)
 #define RETURN_ON_FALSE(pred)   do { if (!(pred)) return; } while (0)
+
+// This is a test: static_assert with no message is a c++17 feature,
+// and std::max() is constexpr only since the c++14 stdlib.
+static_assert(std::max(3,4) == 4);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -191,7 +195,7 @@ struct DeviceCM {
              const SkImage* clipImage, const SkMatrix* clipMatrix)
         : fNext(nullptr)
         , fDevice(std::move(device))
-        , fPaint(paint ? skstd::make_unique<SkPaint>(*paint) : nullptr)
+        , fPaint(paint ? std::make_unique<SkPaint>(*paint) : nullptr)
         , fStashedMatrix(stashed)
         , fClipImage(sk_ref_sp(const_cast<SkImage*>(clipImage)))
         , fClipMatrix(clipMatrix ? *clipMatrix : SkMatrix::I())
@@ -232,7 +236,7 @@ public:
     DeviceCM* fTopLayer;
     std::unique_ptr<BackImage> fBackImage;
     SkConservativeClip fRasterClip;
-    SkMatrix fMatrix;
+    SkCanvasMatrix fMatrix;
     int fDeferredSaveCount;
 
     MCRec() {
@@ -515,7 +519,7 @@ void SkCanvas::init(sk_sp<SkBaseDevice> device) {
         device->androidFramework_setDeviceClipRestriction(&fClipRestrictionRect);
     }
 
-    fScratchGlyphRunBuilder = skstd::make_unique<SkGlyphRunBuilder>();
+    fScratchGlyphRunBuilder = std::make_unique<SkGlyphRunBuilder>();
 }
 
 SkCanvas::SkCanvas()
@@ -614,6 +618,10 @@ void SkCanvas::onFlush() {
     if (device) {
         device->flush();
     }
+}
+
+SkSurface* SkCanvas::getSurface() const {
+    return fSurfaceBase;
 }
 
 SkISize SkCanvas::getBaseLayerSize() const {
@@ -1028,11 +1036,11 @@ void SkCanvas::DrawDeviceWithFilter(SkBaseDevice* src, const SkImageFilter* filt
 
         // Manually setting the device's CTM requires accounting for the device's origin.
         // TODO (michaelludwig) - This could be simpler if the dst device had its origin configured
-        // before filtering the backdrop device, and if SkAutoDeviceCTMRestore had a way to accept
+        // before filtering the backdrop device, and if SkAutoDeviceTransformRestore had a way to accept
         // a global CTM instead of a device CTM.
         SkMatrix dstCTM = toRoot;
         dstCTM.postTranslate(-dstOrigin.x(), -dstOrigin.y());
-        SkAutoDeviceCTMRestore acr(dst, dstCTM);
+        SkAutoDeviceTransformRestore adr(dst, dstCTM);
 
         // And because devices don't have a special-image draw function that supports arbitrary
         // matrices, we are abusing the asImage() functionality here...
@@ -1045,19 +1053,11 @@ void SkCanvas::DrawDeviceWithFilter(SkBaseDevice* src, const SkImageFilter* filt
     }
 }
 
-// This is shared by all backends, but contains raster-specific thoughts. Can we defer to the
-// device to perform this?
 static SkImageInfo make_layer_info(const SkImageInfo& prev, int w, int h, const SkPaint* paint) {
-    // Need to force L32 for now if we have an image filter.
-    // If filters ever support other colortypes, e.g. F16, we can modify this check.
-    if (paint && paint->getImageFilter()) {
-        // TODO: can we query the imagefilter, to see if it can handle floats (so we don't always
-        //       use N32 when the layer itself was float)?
-        return SkImageInfo::MakeN32Premul(w, h, prev.refColorSpace());
-    }
-
     SkColorType ct = prev.colorType();
-    if (prev.bytesPerPixel() <= 4) {
+    if (prev.bytesPerPixel() <= 4 &&
+        prev.colorType() != kRGBA_8888_SkColorType &&
+        prev.colorType() != kBGRA_8888_SkColorType) {
         // "Upgrade" A8, G8, 565, 4444, 1010102, 101010x, and 888x to 8888,
         // ensuring plenty of alpha bits for the layer, perhaps losing some color bits in return.
         ct = kN32_SkColorType;
@@ -1475,6 +1475,25 @@ void SkCanvas::concat(const SkMatrix& matrix) {
     this->didConcat(matrix);
 }
 
+#ifndef SK_SUPPORT_LEGACY_CANVAS_MATRIX_33
+// inefficient, just wanted something so we can test with for now
+void SkCanvas::concat(const SkMatrix44& matrix) {
+    this->checkForDeferredSave();
+
+    SkScalar m[16];
+    matrix.asColMajorf(m);
+    SkM44 m44;
+    m44.setColMajor(m);
+    fMCRec->fMatrix.preConcat(m44);
+
+    fIsScaleTranslate = fMCRec->fMatrix.isScaleTranslate();
+
+    FOR_EACH_TOP_DEVICE(device->setGlobalCTM(fMCRec->fMatrix));
+
+    this->didConcat44(m);
+}
+#endif
+
 void SkCanvas::internalSetMatrix(const SkMatrix& matrix) {
     fMCRec->fMatrix = matrix;
     fIsScaleTranslate = matrix.isScaleTranslate();
@@ -1584,8 +1603,7 @@ void SkCanvas::onClipPath(const SkPath& path, SkClipOp op, ClipEdgeStyle edgeSty
     FOR_EACH_TOP_DEVICE(device->clipPath(path, op, isAA));
 
     const SkPath* rasterClipPath = &path;
-    const SkMatrix* matrix = &fMCRec->fMatrix;
-    fMCRec->fRasterClip.opPath(*rasterClipPath, *matrix, this->getTopLayerBounds(),
+    fMCRec->fRasterClip.opPath(*rasterClipPath, fMCRec->fMatrix, this->getTopLayerBounds(),
                                (SkRegion::Op)op, isAA);
     fDeviceClipBounds = qr_clip_bounds(fMCRec->fRasterClip.getBounds());
 }
@@ -1762,7 +1780,7 @@ SkIRect SkCanvas::getDeviceClipBounds() const {
     return fMCRec->fRasterClip.getBounds();
 }
 
-const SkMatrix& SkCanvas::getTotalMatrix() const {
+SkMatrix SkCanvas::getTotalMatrix() const {
     return fMCRec->fMatrix;
 }
 
@@ -2251,7 +2269,7 @@ void SkCanvas::onDrawBehind(const SkPaint& paint) {
         // We use clipRegion because it is already defined to operate in dev-space
         // (i.e. ignores the ctm). However, it is going to first translate by -origin,
         // but we don't want that, so we undo that before calling in.
-        SkRegion rgn(bounds.makeOffset(dev->fOrigin.fX, dev->fOrigin.fY));
+        SkRegion rgn(bounds.makeOffset(dev->fOrigin));
         dev->clipRegion(rgn, SkClipOp::kIntersect);
         dev->drawPaint(draw.paint());
         dev->restore(fMCRec->fMatrix);
@@ -2442,7 +2460,7 @@ void SkCanvas::onDrawImage(const SkImage* image, SkScalar x, SkScalar y, const S
         const SkPaint& pnt = draw.paint();
         if (special) {
             SkPoint pt;
-            iter.fDevice->ctm().mapXY(x, y, &pt);
+            iter.fDevice->localToDevice().mapXY(x, y, &pt);
             iter.fDevice->drawSpecial(special.get(),
                                       SkScalarRoundToInt(pt.fX),
                                       SkScalarRoundToInt(pt.fY), pnt,
@@ -2520,7 +2538,7 @@ void SkCanvas::onDrawBitmap(const SkBitmap& bitmap, SkScalar x, SkScalar y, cons
         const SkPaint& pnt = draw.paint();
         if (special) {
             SkPoint pt;
-            iter.fDevice->ctm().mapXY(x, y, &pt);
+            iter.fDevice->localToDevice().mapXY(x, y, &pt);
             iter.fDevice->drawSpecial(special.get(),
                                       SkScalarRoundToInt(pt.fX),
                                       SkScalarRoundToInt(pt.fY), pnt,
@@ -3011,7 +3029,7 @@ SkBaseDevice* SkCanvas::LayerIter::device() const {
 }
 
 const SkMatrix& SkCanvas::LayerIter::matrix() const {
-    return fImpl->fDevice->ctm();
+    return fImpl->fDevice->localToDevice();
 }
 
 const SkPaint& SkCanvas::LayerIter::paint() const {
@@ -3069,8 +3087,8 @@ std::unique_ptr<SkCanvas> SkCanvas::MakeRasterDirect(const SkImageInfo& info, vo
     }
 
     return props ?
-        skstd::make_unique<SkCanvas>(bitmap, *props) :
-        skstd::make_unique<SkCanvas>(bitmap);
+        std::make_unique<SkCanvas>(bitmap, *props) :
+        std::make_unique<SkCanvas>(bitmap);
 }
 
 ///////////////////////////////////////////////////////////////////////////////

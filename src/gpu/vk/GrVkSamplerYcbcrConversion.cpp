@@ -10,7 +10,7 @@
 #include "src/gpu/vk/GrVkGpu.h"
 
 GrVkSamplerYcbcrConversion* GrVkSamplerYcbcrConversion::Create(
-        const GrVkGpu* gpu, const GrVkYcbcrConversionInfo& info) {
+        GrVkGpu* gpu, const GrVkYcbcrConversionInfo& info) {
     if (!gpu->vkCaps().supportsYcbcrConversion()) {
         return nullptr;
     }
@@ -71,9 +71,10 @@ GrVkSamplerYcbcrConversion* GrVkSamplerYcbcrConversion::Create(
     }
 
     VkSamplerYcbcrConversion conversion;
-    GR_VK_CALL(gpu->vkInterface(), CreateSamplerYcbcrConversion(gpu->device(), &ycbcrCreateInfo,
+    VkResult result;
+    GR_VK_CALL_RESULT(gpu, result, CreateSamplerYcbcrConversion(gpu->device(), &ycbcrCreateInfo,
                                                                 nullptr, &conversion));
-    if (conversion == VK_NULL_HANDLE) {
+    if (result != VK_SUCCESS) {
         return nullptr;
     }
 
@@ -99,7 +100,7 @@ GrVkSamplerYcbcrConversion::Key GrVkSamplerYcbcrConversion::GenerateKey(
     SkASSERT(static_cast<int>(ycbcrInfo.fChromaFilter) <= 1);
     static const int kReconShift = kChromaFilterShift + 1;
     SkASSERT(static_cast<int>(ycbcrInfo.fForceExplicitReconstruction) <= 1);
-    GR_STATIC_ASSERT(kReconShift <= 7);
+    static_assert(kReconShift <= 7);
 
     uint8_t ycbcrKey = static_cast<uint8_t>(ycbcrInfo.fYcbcrModel);
     ycbcrKey |= (static_cast<uint8_t>(ycbcrInfo.fYcbcrRange) << kRangeShift);

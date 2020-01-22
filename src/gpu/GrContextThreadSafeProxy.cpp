@@ -12,7 +12,7 @@
 #include "include/gpu/GrContext.h"
 #include "src/gpu/GrBaseContextPriv.h"
 #include "src/gpu/GrCaps.h"
-#include "src/gpu/GrSkSLFPFactoryCache.h"
+#include "src/gpu/effects/GrSkSLFP.h"
 #include "src/image/SkSurface_Gpu.h"
 
 #ifdef SK_VULKAN
@@ -27,9 +27,8 @@ GrContextThreadSafeProxy::GrContextThreadSafeProxy(GrBackendApi backend,
 
 GrContextThreadSafeProxy::~GrContextThreadSafeProxy() = default;
 
-bool GrContextThreadSafeProxy::init(sk_sp<const GrCaps> caps,
-                                    sk_sp<GrSkSLFPFactoryCache> FPFactoryCache) {
-    return INHERITED::init(std::move(caps), std::move(FPFactoryCache));
+bool GrContextThreadSafeProxy::init(sk_sp<const GrCaps> caps) {
+    return INHERITED::init(std::move(caps));
 }
 
 SkSurfaceCharacterization GrContextThreadSafeProxy::createCharacterization(
@@ -52,10 +51,6 @@ SkSurfaceCharacterization GrContextThreadSafeProxy::createCharacterization(
 
     if (!this->caps()->mipMapSupport()) {
         isMipMapped = false;
-    }
-
-    if (!SkSurface_Gpu::Valid(this->caps(), backendFormat)) {
-        return SkSurfaceCharacterization(); // return an invalid characterization
     }
 
     GrColorType grColorType = SkColorTypeToGrColorType(ii.colorType());
@@ -107,20 +102,15 @@ SkSurfaceCharacterization GrContextThreadSafeProxy::createCharacterization(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-sk_sp<GrSkSLFPFactoryCache> GrContextThreadSafeProxyPriv::fpFactoryCache() {
-    return fProxy->fpFactoryCache();
-}
-
 sk_sp<GrContextThreadSafeProxy> GrContextThreadSafeProxyPriv::Make(
                              GrBackendApi backend,
                              const GrContextOptions& options,
                              uint32_t contextID,
-                             sk_sp<const GrCaps> caps,
-                             sk_sp<GrSkSLFPFactoryCache> cache) {
+                             sk_sp<const GrCaps> caps) {
     sk_sp<GrContextThreadSafeProxy> proxy(new GrContextThreadSafeProxy(backend, options,
                                                                        contextID));
 
-    if (!proxy->init(std::move(caps), std::move(cache))) {
+    if (!proxy->init(std::move(caps))) {
         return nullptr;
     }
     return proxy;

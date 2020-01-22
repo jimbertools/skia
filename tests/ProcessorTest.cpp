@@ -11,6 +11,7 @@
 #include "include/gpu/GrGpuResource.h"
 #include "src/gpu/GrClip.h"
 #include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrImageInfo.h"
 #include "src/gpu/GrMemoryPool.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRenderTargetContext.h"
@@ -59,7 +60,7 @@ private:
 
     TestOp(std::unique_ptr<GrFragmentProcessor> fp)
             : INHERITED(ClassID()), fProcessors(std::move(fp)) {
-        this->setBounds(SkRect::MakeWH(100, 100), HasAABloat::kNo, IsZeroArea::kNo);
+        this->setBounds(SkRect::MakeWH(100, 100), HasAABloat::kNo, IsHairline::kNo);
     }
 
     void onPrepareDraws(Target* target) override { return; }
@@ -143,20 +144,6 @@ private:
 };
 }
 
-static void check_refs(skiatest::Reporter* reporter,
-                       GrTextureProxy* proxy,
-                       int32_t expectedProxyRefs,
-                       int32_t expectedBackingRefs) {
-    int32_t actualProxyRefs = proxy->refCnt();
-    int32_t actualBackingRefs = proxy->testingOnly_getBackingRefCnt();
-
-    SkASSERT(actualProxyRefs == expectedProxyRefs);
-    SkASSERT(actualBackingRefs == expectedBackingRefs);
-
-    REPORTER_ASSERT(reporter, actualProxyRefs == expectedProxyRefs);
-    REPORTER_ASSERT(reporter, actualBackingRefs == expectedBackingRefs);
-}
-
 DEF_GPUTEST_FOR_ALL_CONTEXTS(ProcessorRefTest, reporter, ctxInfo) {
     GrContext* context = ctxInfo.grContext();
     GrProxyProvider* proxyProvider = context->priv().proxyProvider();
@@ -172,8 +159,8 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(ProcessorRefTest, reporter, ctxInfo) {
 
     for (bool makeClone : {false, true}) {
         for (int parentCnt = 0; parentCnt < 2; parentCnt++) {
-            auto renderTargetContext = context->priv().makeDeferredRenderTargetContext(
-                    SkBackingFit::kApprox, 1, 1, GrColorType::kRGBA_8888, nullptr);
+            auto renderTargetContext = GrRenderTargetContext::Make(
+                    context, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kApprox, {1, 1});
             {
                 sk_sp<GrTextureProxy> proxy = proxyProvider->createProxy(
                         format, desc, GrRenderable::kNo, 1, kTopLeft_GrSurfaceOrigin,
@@ -202,11 +189,12 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(ProcessorRefTest, reporter, ctxInfo) {
                 // If the fp is cloned the number of refs should increase by one (for the clone)
                 int expectedProxyRefs = makeClone ? 3 : 2;
 
-                check_refs(reporter, proxy.get(), expectedProxyRefs, -1);
+                CheckSingleThreadedProxyRefs(reporter, proxy.get(), expectedProxyRefs, -1);
 
                 context->flush();
 
-                check_refs(reporter, proxy.get(), 1, 1); // just one from the 'proxy' sk_sp
+                // just one from the 'proxy' sk_sp
+                CheckSingleThreadedProxyRefs(reporter, proxy.get(), 1, 1);
             }
         }
     }
@@ -229,7 +217,10 @@ static GrColor input_texel_color(int i, int j, SkScalar delta) {
                                    (uint8_t)((i + j) & 0xFF),
                                    (uint8_t)((2 * j - i) & 0xFF));
     SkColor4f color4f = SkColor4f::FromColor(color);
-    for (int i = 0; i < 4; i++) {
+    // We only apply delta to the r,g, and b channels. This is because we're using this
+    // to test the canTweakAlphaForCoverage() optimization. A processor is allowed
+    // to use the input color's alpha in its calculation and report this optimization.
+    for (int i = 0; i < 3; i++) {
         if (color4f[i] > 0.5) {
             color4f[i] -= delta;
         } else {
@@ -242,27 +233,26 @@ static GrColor input_texel_color(int i, int j, SkScalar delta) {
 void test_draw_op(GrContext* context,
                   GrRenderTargetContext* rtc,
                   std::unique_ptr<GrFragmentProcessor> fp,
-                  sk_sp<GrTextureProxy> inputDataProxy) {
+                  sk_sp<GrTextureProxy> inputDataProxy,
+                  SkAlphaType inputAlphaType) {
     GrPaint paint;
-    paint.addColorTextureProcessor(std::move(inputDataProxy), SkMatrix::I());
+    paint.addColorTextureProcessor(std::move(inputDataProxy), inputAlphaType, SkMatrix::I());
     paint.addColorFragmentProcessor(std::move(fp));
     paint.setPorterDuffXPFactory(SkBlendMode::kSrc);
 
     auto op = GrFillRectOp::MakeNonAARect(context, std::move(paint), SkMatrix::I(),
                                           SkRect::MakeWH(rtc->width(), rtc->height()));
-    rtc->addDrawOp(GrNoClip(), std::move(op));
+    rtc->priv().testingOnly_addDrawOp(std::move(op));
 }
 
 // This assumes that the output buffer will be the same size as inputDataProxy
 void render_fp(GrContext* context, GrRenderTargetContext* rtc, GrFragmentProcessor* fp,
-               sk_sp<GrTextureProxy> inputDataProxy, GrColor* buffer) {
-    int width = inputDataProxy->width();
-    int height = inputDataProxy->height();
-
+               sk_sp<GrTextureProxy> inputDataProxy, SkAlphaType inputAlphaType, GrColor* buffer) {
     // test_draw_op needs to take ownership of an FP, so give it a clone that it can own
-    test_draw_op(context, rtc, fp->clone(), inputDataProxy);
-    memset(buffer, 0x0, sizeof(GrColor) * width * height);
-    rtc->readPixels(SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType),
+    test_draw_op(context, rtc, fp->clone(), inputDataProxy, inputAlphaType);
+    memset(buffer, 0x0, sizeof(GrColor) * inputDataProxy->width() * inputDataProxy->height());
+    rtc->readPixels(SkImageInfo::Make(inputDataProxy->dimensions(), kRGBA_8888_SkColorType,
+                                      kPremul_SkAlphaType),
                     buffer, 0, {0, 0});
 }
 
@@ -270,7 +260,7 @@ void render_fp(GrContext* context, GrRenderTargetContext* rtc, GrFragmentProcess
 bool init_test_textures(GrResourceProvider* resourceProvider,
                         GrProxyProvider* proxyProvider,
                         SkRandom* random,
-                        sk_sp<GrTextureProxy> proxies[2]) {
+                        GrProcessorTestData::ProxyInfo proxies[2]) {
     static const int kTestTextureSize = 256;
 
     {
@@ -287,9 +277,12 @@ bool init_test_textures(GrResourceProvider* resourceProvider,
                                            kRGBA_8888_SkColorType, kPremul_SkAlphaType);
         SkPixmap pixmap(ii, rgbaData.get(), ii.minRowBytes());
         sk_sp<SkImage> img = SkImage::MakeRasterCopy(pixmap);
-        proxies[0] =
+        auto proxy =
                 proxyProvider->createTextureProxy(img, 1, SkBudgeted::kYes, SkBackingFit::kExact);
-        proxies[0]->instantiate(resourceProvider);
+        if (!proxy || !proxy->instantiate(resourceProvider)) {
+            return false;
+        }
+        proxies[0] = {std::move(proxy), GrColorType::kRGBA_8888, kPremul_SkAlphaType};
     }
 
     {
@@ -305,12 +298,15 @@ bool init_test_textures(GrResourceProvider* resourceProvider,
                                            kAlpha_8_SkColorType, kPremul_SkAlphaType);
         SkPixmap pixmap(ii, alphaData.get(), ii.minRowBytes());
         sk_sp<SkImage> img = SkImage::MakeRasterCopy(pixmap);
-        proxies[1] =
+        auto proxy =
                 proxyProvider->createTextureProxy(img, 1, SkBudgeted::kYes, SkBackingFit::kExact);
-        proxies[1]->instantiate(resourceProvider);
+        if (!proxy || !proxy->instantiate(resourceProvider)) {
+            return false;
+        }
+        proxies[1] = {std::move(proxy), GrColorType::kAlpha_8, kPremul_SkAlphaType};
     }
 
-    return proxies[0] && proxies[1];
+    return true;
 }
 
 // Creates a texture of premul colors used as the output of the fragment processor that precedes
@@ -341,18 +337,17 @@ bool log_pixels(GrColor* pixels, int widthHeight, SkString* dst) {
     auto info = SkImageInfo::Make(widthHeight, widthHeight, kRGBA_8888_SkColorType, kLogAlphaType);
     SkBitmap bmp;
     bmp.installPixels(info, pixels, widthHeight * sizeof(GrColor));
-    return bitmap_to_base64_data_uri(bmp, dst);
+    return BipmapToBase64DataURI(bmp, dst);
 }
 
 bool log_texture_proxy(GrContext* context, sk_sp<GrTextureProxy> src, SkString* dst) {
-    auto sContext =
-            context->priv().makeWrappedSurfaceContext(src, GrColorType::kRGBA_8888, kLogAlphaType);
-    SkImageInfo ii =
-            SkImageInfo::Make(src->width(), src->height(), kRGBA_8888_SkColorType, kLogAlphaType);
+    auto sContext = GrSurfaceContext::Make(context, src, GrColorType::kRGBA_8888, kLogAlphaType,
+                                           nullptr);
+    SkImageInfo ii = SkImageInfo::Make(src->dimensions(), kRGBA_8888_SkColorType, kLogAlphaType);
     SkBitmap bm;
     SkAssertResult(bm.tryAllocPixels(ii));
     SkAssertResult(sContext->readPixels(ii, bm.getPixels(), bm.rowBytes(), {0, 0}));
-    return bitmap_to_base64_data_uri(bm, dst);
+    return BipmapToBase64DataURI(bm, dst);
 }
 
 bool fuzzy_color_equals(const SkPMColor4f& c1, const SkPMColor4f& c2) {
@@ -369,56 +364,105 @@ bool fuzzy_color_equals(const SkPMColor4f& c1, const SkPMColor4f& c2) {
     return true;
 }
 
-int modulation_index(int channelIndex, bool alphaModulation) {
-    return alphaModulation ? 3 : channelIndex;
-}
-
-// Given three input colors (color preceding the FP being tested), and the output of the FP, this
-// ensures that the out1 = fp * in1.a, out2 = fp * in2.a, and out3 = fp * in3.a, where fp is the
-// pre-modulated color that should not be changing across frames (FP's state doesn't change).
-//
-// When alphaModulation is false, this tests the very similar conditions that out1 = fp * in1,
-// etc. using per-channel modulation instead of modulation by just the input alpha channel.
-// - This estimates the pre-modulated fp color from one of the input/output pairs and confirms the
-//   conditions hold for the other two pairs.
-bool legal_modulation(const GrColor& in1, const GrColor& in2, const GrColor& in3,
-                      const GrColor& out1, const GrColor& out2, const GrColor& out3,
-                      bool alphaModulation) {
+// Given three input colors (color preceding the FP being tested) provided to the FP at the same
+// local coord and the three corresponding FP outputs, this ensures that either:
+//   out[0] = fp * in[0].a, out[1] = fp * in[1].a, and out[2] = fp * in[2].a
+// where fp is the pre-modulated color that should not be changing across frames (FP's state doesn't
+// change), OR:
+//   out[0] = fp * in[0], out[1] = fp * in[1], and out[2] = fp * in[2]
+// (per-channel modulation instead of modulation by just the alpha channel)
+// It does this by estimating the pre-modulated fp color from one of the input/output pairs and
+// confirms the conditions hold for the other two pairs.
+// It is required that the three input colors have the same alpha as fp is allowed to be a function
+// of the input alpha (but not r, g, or b).
+bool legal_modulation(const GrColor in[3], const GrColor out[3]) {
     // Convert to floating point, which is the number space the FP operates in (more or less)
-    SkPMColor4f in1f = SkPMColor4f::FromBytes_RGBA(in1);
-    SkPMColor4f in2f = SkPMColor4f::FromBytes_RGBA(in2);
-    SkPMColor4f in3f = SkPMColor4f::FromBytes_RGBA(in3);
-    SkPMColor4f out1f = SkPMColor4f::FromBytes_RGBA(out1);
-    SkPMColor4f out2f = SkPMColor4f::FromBytes_RGBA(out2);
-    SkPMColor4f out3f = SkPMColor4f::FromBytes_RGBA(out3);
+    SkPMColor4f inf[3], outf[3];
+    for (int i = 0; i < 3; ++i) {
+        inf[i]  = SkPMColor4f::FromBytes_RGBA(in[i]);
+        outf[i] = SkPMColor4f::FromBytes_RGBA(out[i]);
+    }
+    // This test is only valid if all the input alphas are the same.
+    SkASSERT(inf[0].fA == inf[1].fA && inf[1].fA == inf[2].fA);
 
     // Reconstruct the output of the FP before the shader modulated its color with the input value.
     // When the original input is very small, it may cause the final output color to round
     // to 0, in which case we estimate the pre-modulated color using one of the stepped frames that
     // will then have a guaranteed larger channel value (since the offset will be added to it).
-    SkPMColor4f fpPreModulation;
+    SkPMColor4f fpPreColorModulation = {0,0,0,0};
+    SkPMColor4f fpPreAlphaModulation = {0,0,0,0};
     for (int i = 0; i < 4; i++) {
-        int modulationIndex = modulation_index(i, alphaModulation);
-        if (in1f[modulationIndex] < 0.2f) {
-            // Use the stepped frame
-            fpPreModulation[i] = out2f[i] / in2f[modulationIndex];
-        } else {
-            fpPreModulation[i] = out1f[i] / in1f[modulationIndex];
+        // Use the most stepped up frame
+        int maxInIdx = inf[0][i] > inf[1][i] ? 0 : 1;
+        maxInIdx = inf[maxInIdx][i] > inf[2][i] ? maxInIdx : 2;
+        const auto& in = inf[maxInIdx];
+        const auto& out = outf[maxInIdx];
+        if (in[i] > 0) {
+            fpPreColorModulation[i] = out[i] / in[i];
+        }
+        if (in[3] > 0) {
+            fpPreAlphaModulation[i] = out[i] / in[3];
         }
     }
 
     // With reconstructed pre-modulated FP output, derive the expected value of fp * input for each
     // of the transformed input colors.
-    SkPMColor4f expected1 = alphaModulation ? (fpPreModulation * in1f.fA)
-                                            : (fpPreModulation * in1f);
-    SkPMColor4f expected2 = alphaModulation ? (fpPreModulation * in2f.fA)
-                                            : (fpPreModulation * in2f);
-    SkPMColor4f expected3 = alphaModulation ? (fpPreModulation * in3f.fA)
-                                            : (fpPreModulation * in3f);
+    SkPMColor4f expectedForAlphaModulation[3];
+    SkPMColor4f expectedForColorModulation[3];
+    for (int i = 0; i < 3; ++i) {
+        expectedForAlphaModulation[i] = fpPreAlphaModulation * inf[i].fA;
+        expectedForColorModulation[i] = fpPreColorModulation * inf[i];
+        // If the input alpha is 0 then the other channels should also be zero
+        // since the color is assumed to be premul. Modulating zeros by anything
+        // should produce zeros.
+        if (inf[i].fA == 0) {
+            SkASSERT(inf[i].fR == 0 && inf[i].fG == 0 && inf[i].fB == 0);
+            expectedForColorModulation[i] = expectedForAlphaModulation[i] = {0, 0, 0, 0};
+        }
+    }
 
-    return fuzzy_color_equals(out1f, expected1) &&
-           fuzzy_color_equals(out2f, expected2) &&
-           fuzzy_color_equals(out3f, expected3);
+    bool isLegalColorModulation = fuzzy_color_equals(outf[0], expectedForColorModulation[0]) &&
+                                  fuzzy_color_equals(outf[1], expectedForColorModulation[1]) &&
+                                  fuzzy_color_equals(outf[2], expectedForColorModulation[2]);
+
+    bool isLegalAlphaModulation = fuzzy_color_equals(outf[0], expectedForAlphaModulation[0]) &&
+                                  fuzzy_color_equals(outf[1], expectedForAlphaModulation[1]) &&
+                                  fuzzy_color_equals(outf[2], expectedForAlphaModulation[2]);
+
+    // This can be enabled to print the values that caused this check to fail.
+    if (0 && !isLegalColorModulation && !isLegalAlphaModulation) {
+        SkDebugf("Color modulation test\n\timplied mod color: (%.03f, %.03f, %.03f, %.03f)\n",
+                 fpPreColorModulation[0],
+                 fpPreColorModulation[1],
+                 fpPreColorModulation[2],
+                 fpPreColorModulation[3]);
+        for (int i = 0; i < 3; ++i) {
+            SkDebugf("\t(%.03f, %.03f, %.03f, %.03f) -> "
+                     "(%.03f, %.03f, %.03f, %.03f) | "
+                     "(%.03f, %.03f, %.03f, %.03f), ok: %d\n",
+                     inf[i].fR, inf[i].fG, inf[i].fB, inf[i].fA,
+                     outf[i].fR, outf[i].fG, outf[i].fB, outf[i].fA,
+                     expectedForColorModulation[i].fR, expectedForColorModulation[i].fG,
+                     expectedForColorModulation[i].fB, expectedForColorModulation[i].fA,
+                     fuzzy_color_equals(outf[i], expectedForColorModulation[i]));
+        }
+        SkDebugf("Alpha modulation test\n\timplied mod color: (%.03f, %.03f, %.03f, %.03f)\n",
+                 fpPreAlphaModulation[0],
+                 fpPreAlphaModulation[1],
+                 fpPreAlphaModulation[2],
+                 fpPreAlphaModulation[3]);
+        for (int i = 0; i < 3; ++i) {
+            SkDebugf("\t(%.03f, %.03f, %.03f, %.03f) -> "
+                     "(%.03f, %.03f, %.03f, %.03f) | "
+                     "(%.03f, %.03f, %.03f, %.03f), ok: %d\n",
+                     inf[i].fR, inf[i].fG, inf[i].fB, inf[i].fA,
+                     outf[i].fR, outf[i].fG, outf[i].fB, outf[i].fA,
+                     expectedForAlphaModulation[i].fR, expectedForAlphaModulation[i].fG,
+                     expectedForAlphaModulation[i].fB, expectedForAlphaModulation[i].fA,
+                     fuzzy_color_equals(outf[i], expectedForAlphaModulation[i]));
+        }
+    }
+    return isLegalColorModulation || isLegalAlphaModulation;
 }
 
 DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(ProcessorOptimizationValidationTest, reporter, ctxInfo) {
@@ -438,15 +482,16 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(ProcessorOptimizationValidationTest, repor
 
     // Make the destination context for the test.
     static constexpr int kRenderSize = 256;
-    auto rtc = context->priv().makeDeferredRenderTargetContext(
-            SkBackingFit::kExact, kRenderSize, kRenderSize, GrColorType::kRGBA_8888, nullptr);
+    auto rtc = GrRenderTargetContext::Make(
+            context, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kExact,
+            {kRenderSize, kRenderSize});
 
-    sk_sp<GrTextureProxy> proxies[2];
+    GrProcessorTestData::ProxyInfo proxies[2];
     if (!init_test_textures(resourceProvider, proxyProvider, &random, proxies)) {
         ERRORF(reporter, "Could not create test textures");
         return;
     }
-    GrProcessorTestData testData(&random, context, rtc.get(), proxies);
+    GrProcessorTestData testData(&random, context, 2, proxies);
 
     // Coverage optimization uses three frames with a linearly transformed input texture.  The first
     // frame has no offset, second frames add .2 and .4, which should then be present as a fixed
@@ -493,12 +538,15 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(ProcessorOptimizationValidationTest, repor
 
             if (fp->compatibleWithCoverageAsAlpha()) {
                 // 2nd and 3rd frames are only used when checking coverage optimization
-                render_fp(context, rtc.get(), fp.get(), inputTexture2, readData2.get());
-                render_fp(context, rtc.get(), fp.get(), inputTexture3, readData3.get());
+                render_fp(context, rtc.get(), fp.get(), inputTexture2, kPremul_SkAlphaType,
+                          readData2.get());
+                render_fp(context, rtc.get(), fp.get(), inputTexture3, kPremul_SkAlphaType,
+                          readData3.get());
             }
             // Draw base frame last so that rtc holds the original FP behavior if we need to
             // dump the image to the log.
-            render_fp(context, rtc.get(), fp.get(), inputTexture1, readData1.get());
+            render_fp(context, rtc.get(), fp.get(), inputTexture1, kPremul_SkAlphaType,
+                      readData1.get());
 
             if (0) {  // Useful to see what FPs are being tested.
                 SkString children;
@@ -535,24 +583,21 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(ProcessorOptimizationValidationTest, repor
                     GrColor output = readData1.get()[y * kRenderSize + x];
 
                     if (fp->compatibleWithCoverageAsAlpha()) {
-                        GrColor i2 = input_texel_color(x, y, kInputDelta);
-                        GrColor i3 = input_texel_color(x, y, 2 * kInputDelta);
+                        GrColor ins[3];
+                        ins[0] = input;
+                        ins[1] = input_texel_color(x, y, kInputDelta);
+                        ins[2] = input_texel_color(x, y, 2 * kInputDelta);
 
-                        GrColor o2 = readData2.get()[y * kRenderSize + x];
-                        GrColor o3 = readData3.get()[y * kRenderSize + x];
+                        GrColor outs[3];
+                        outs[0] = output;
+                        outs[1] = readData2.get()[y * kRenderSize + x];
+                        outs[2] = readData3.get()[y * kRenderSize + x];
 
-                        // A compatible processor is allowed to modulate either the input color or
-                        // just the input alpha.
-                        bool legalAlphaModulation = legal_modulation(input, i2, i3, output, o2, o3,
-                                                                     /* alpha */ true);
-                        bool legalColorModulation = legal_modulation(input, i2, i3, output, o2, o3,
-                                                                     /* alpha */ false);
-
-                        if (!legalColorModulation && !legalAlphaModulation) {
+                        if (!legal_modulation(ins, outs)) {
                             passing = false;
-
                             if (coverageMessage.isEmpty()) {
-                                coverageMessage.printf("\"Modulating\" processor %s did not match "
+                                coverageMessage.printf(
+                                        "\"Modulating\" processor %s did not match "
                                         "alpha-modulation nor color-modulation rules. "
                                         "Input: 0x%08x, Output: 0x%08x, pixel (%d, %d).",
                                         fp->name(), input, output, x, y);
@@ -672,15 +717,16 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(ProcessorCloneTest, reporter, ctxInfo) {
 
     // Make the destination context for the test.
     static constexpr int kRenderSize = 1024;
-    auto rtc = context->priv().makeDeferredRenderTargetContext(
-            SkBackingFit::kExact, kRenderSize, kRenderSize, GrColorType::kRGBA_8888, nullptr);
+    auto rtc = GrRenderTargetContext::Make(
+            context, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kExact,
+            {kRenderSize, kRenderSize});
 
-    sk_sp<GrTextureProxy> proxies[2];
+    GrProcessorTestData::ProxyInfo proxies[2];
     if (!init_test_textures(resourceProvider, proxyProvider, &random, proxies)) {
         ERRORF(reporter, "Could not create test textures");
         return;
     }
-    GrProcessorTestData testData(&random, context, rtc.get(), proxies);
+    GrProcessorTestData testData(&random, context, 2, proxies);
 
     auto inputTexture = make_input_texture(proxyProvider, kRenderSize, kRenderSize, 0.0f);
     std::unique_ptr<GrColor[]> readData1(new GrColor[kRenderSize * kRenderSize]);
@@ -720,10 +766,12 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(ProcessorCloneTest, reporter, ctxInfo) {
             REPORTER_ASSERT(reporter, fp->numChildProcessors() == clone->numChildProcessors());
             REPORTER_ASSERT(reporter, fp->usesLocalCoords() == clone->usesLocalCoords());
             // Draw with original and read back the results.
-            render_fp(context, rtc.get(), fp.get(), inputTexture, readData1.get());
+            render_fp(context, rtc.get(), fp.get(), inputTexture, kPremul_SkAlphaType,
+                      readData1.get());
 
             // Draw with clone and read back the results.
-            render_fp(context, rtc.get(), clone.get(), inputTexture, readData2.get());
+            render_fp(context, rtc.get(), clone.get(), inputTexture, kPremul_SkAlphaType,
+                      readData2.get());
 
             // Check that the results are the same.
             bool passing = true;

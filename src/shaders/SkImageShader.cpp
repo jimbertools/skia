@@ -9,8 +9,10 @@
 #include "src/core/SkBitmapController.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkColorSpaceXformSteps.h"
+#include "src/core/SkOpts.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkReadBuffer.h"
+#include "src/core/SkVM.h"
 #include "src/core/SkWriteBuffer.h"
 #include "src/image/SkImage_Base.h"
 #include "src/shaders/SkBitmapProcShader.h"
@@ -72,20 +74,24 @@ bool SkImageShader::isOpaque() const {
 
 #ifdef SK_ENABLE_LEGACY_SHADERCONTEXT
 static bool legacy_shader_can_handle(const SkMatrix& inv) {
-    if (!inv.isScaleTranslate()) {
+    if (inv.hasPerspective()) {
+        return false;
+    }
+
+    // Scale+translate methods are always present, but affine might not be.
+    if (!SkOpts::S32_alpha_D32_filter_DXDY && !inv.isScaleTranslate()) {
         return false;
     }
 
     // legacy code uses SkFixed 32.32, so ensure the inverse doesn't map device coordinates
     // out of range.
     const SkScalar max_dev_coord = 32767.0f;
-    SkRect src;
-    SkAssertResult(inv.mapRect(&src, SkRect::MakeWH(max_dev_coord, max_dev_coord)));
+    const SkRect src = inv.mapRect(SkRect::MakeWH(max_dev_coord, max_dev_coord));
 
     // take 1/4 of max signed 32bits so we have room to subtract local values
     const SkScalar max_fixed32dot32 = SK_MaxS32 * 0.25f;
     if (!SkRect::MakeLTRB(-max_fixed32dot32, -max_fixed32dot32,
-                           max_fixed32dot32, max_fixed32dot32).contains(src)) {
+                          +max_fixed32dot32, +max_fixed32dot32).contains(src)) {
         return false;
     }
 
@@ -101,9 +107,11 @@ SkShaderBase::Context* SkImageShader::onMakeContext(const ContextRec& rec,
     if (fImage->colorType() != kN32_SkColorType) {
         return nullptr;
     }
+#if !defined(SK_SUPPORT_LEGACY_TILED_BITMAPS)
     if (fTileModeX != fTileModeY) {
         return nullptr;
     }
+#endif
     if (fTileModeX == SkTileMode::kDecal || fTileModeY == SkTileMode::kDecal) {
         return nullptr;
     }
@@ -165,11 +173,11 @@ sk_sp<SkShader> SkImageShader::Make(sk_sp<SkImage> image,
 
 #include "include/private/GrRecordingContext.h"
 #include "src/gpu/GrCaps.h"
-#include "src/gpu/GrColorSpaceInfo.h"
+#include "src/gpu/GrColorInfo.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/SkGr.h"
 #include "src/gpu/effects/GrBicubicEffect.h"
-#include "src/gpu/effects/generated/GrSimpleTextureEffect.h"
+#include "src/gpu/effects/GrTextureEffect.h"
 
 static GrSamplerState::WrapMode tile_mode_to_wrap_mode(const SkTileMode tileMode) {
     switch (tileMode) {
@@ -228,8 +236,7 @@ std::unique_ptr<GrFragmentProcessor> SkImageShader::asFragmentProcessor(
         return nullptr;
     }
 
-    GrPixelConfig config = proxy->config();
-    bool isAlphaOnly = GrPixelConfigIsAlphaOnly(config);
+    SkAlphaType srcAlphaType = fImage->alphaType();
 
     lmInverse.postScale(scaleAdjust[0], scaleAdjust[1]);
 
@@ -239,21 +246,21 @@ std::unique_ptr<GrFragmentProcessor> SkImageShader::asFragmentProcessor(
         // the bicubic filter if clamp to border was unsupported in hardware
         static constexpr auto kDir = GrBicubicEffect::Direction::kXY;
         inner = GrBicubicEffect::Make(std::move(proxy), lmInverse, wrapModes, domainX, domainY,
-                                      kDir, fImage->alphaType());
+                                      kDir, srcAlphaType);
     } else {
+        auto dimensions = proxy->dimensions();
+        inner = GrTextureEffect::Make(std::move(proxy), srcAlphaType, lmInverse, samplerState);
         if (domainX != GrTextureDomain::kIgnore_Mode || domainY != GrTextureDomain::kIgnore_Mode) {
-            SkRect domain = GrTextureDomain::MakeTexelDomain(
-                    SkIRect::MakeWH(proxy->width(), proxy->height()),
-                    domainX, domainY);
-            inner = GrTextureDomainEffect::Make(std::move(proxy), lmInverse, domain,
-                                                domainX, domainY, samplerState);
-        } else {
-            inner = GrSimpleTextureEffect::Make(std::move(proxy), lmInverse, samplerState);
+            SkRect domain = GrTextureDomain::MakeTexelDomain(SkIRect::MakeSize(dimensions),
+                                                             domainX, domainY);
+            inner = GrDomainEffect::Make(std::move(inner), domain, domainX, domainY,
+                                         samplerState.filter());
         }
     }
-    inner = GrColorSpaceXformEffect::Make(std::move(inner), fImage->colorSpace(),
-                                          fImage->alphaType(),
-                                          args.fDstColorSpaceInfo->colorSpace());
+    inner = GrColorSpaceXformEffect::Make(std::move(inner), fImage->colorSpace(), srcAlphaType,
+                                          args.fDstColorInfo->colorSpace());
+
+    bool isAlphaOnly = SkColorTypeIsAlphaOnly(fImage->colorType());
     if (isAlphaOnly) {
         return inner;
     } else if (args.fInputColorIsOpaque) {
@@ -293,9 +300,15 @@ void SkShaderBase::RegisterFlattenables() { SK_REGISTER_FLATTENABLE(SkImageShade
 
 class SkImageStageUpdater : public SkStageUpdater {
 public:
-    const SkImageShader* fShader;
+    SkImageStageUpdater(const SkImageShader* shader, bool usePersp)
+        : fShader(shader), fUsePersp(usePersp)
+    {}
 
-    float fMatrixStorage[6];
+    const SkImageShader* fShader;
+    const bool           fUsePersp; // else use affine
+
+    // large enough for perspective, though often we just use 2x3
+    float fMatrixStorage[9];
 
 #if 0   // TODO: when we support mipmaps
     SkRasterPipeline_GatherCtx* fGather;
@@ -304,21 +317,53 @@ public:
     SkRasterPipeline_DecalTileCtx* fDecal;
 #endif
 
+    void append_matrix_stage(SkRasterPipeline* p) {
+        if (fUsePersp) {
+            p->append(SkRasterPipeline::matrix_perspective, fMatrixStorage);
+        } else {
+            p->append(SkRasterPipeline::matrix_2x3, fMatrixStorage);
+        }
+    }
+
     bool update(const SkMatrix& ctm, const SkMatrix* localM) override {
         SkMatrix matrix;
-        return fShader->computeTotalInverse(ctm, localM, &matrix) &&
-               matrix.asAffine(fMatrixStorage);
+        if (fShader->computeTotalInverse(ctm, localM, &matrix)) {
+            if (fUsePersp) {
+                matrix.get9(fMatrixStorage);
+            } else {
+               SkAssertResult(matrix.asAffine(fMatrixStorage));
+            }
+            return true;
+        }
+        return false;
     }
 };
 
+static void tweak_quality_and_inv_matrix(SkFilterQuality* quality, SkMatrix* matrix) {
+    // When the matrix is just an integer translate, bilerp == nearest neighbor.
+    if (*quality == kLow_SkFilterQuality &&
+            matrix->getType() <= SkMatrix::kTranslate_Mask &&
+            matrix->getTranslateX() == (int)matrix->getTranslateX() &&
+            matrix->getTranslateY() == (int)matrix->getTranslateY()) {
+        *quality = kNone_SkFilterQuality;
+    }
+
+    // See skia:4649 and the GM image_scale_aligned.
+    if (*quality == kNone_SkFilterQuality) {
+        if (matrix->getScaleX() >= 0) {
+            matrix->setTranslateX(nextafterf(matrix->getTranslateX(),
+                                             floorf(matrix->getTranslateX())));
+        }
+        if (matrix->getScaleY() >= 0) {
+            matrix->setTranslateY(nextafterf(matrix->getTranslateY(),
+                                             floorf(matrix->getTranslateY())));
+        }
+    }
+}
+
 bool SkImageShader::doStages(const SkStageRec& rec, SkImageStageUpdater* updater) const {
-    if (updater &&
-        (rec.fPaint.getFilterQuality() == kMedium_SkFilterQuality ||
-         rec.fCTM.hasPerspective()))
-    {
-        // TODO: handle these cases
-        // medium: recall RequestBitmap and update width/height accordingly
-        // perspt: store 9 floats and use persp stage
+    if (updater && rec.fPaint.getFilterQuality() == kMedium_SkFilterQuality) {
+        // TODO: medium: recall RequestBitmap and update width/height accordingly
         return false;
     }
 
@@ -345,27 +390,9 @@ bool SkImageShader::doStages(const SkStageRec& rec, SkImageStageUpdater* updater
     p->append(SkRasterPipeline::seed_shader);
 
     if (updater) {
-        p->append(SkRasterPipeline::matrix_2x3, updater->fMatrixStorage);
+        updater->append_matrix_stage(p);
     } else {
-        // When the matrix is just an integer translate, bilerp == nearest neighbor.
-        if (quality == kLow_SkFilterQuality &&
-            matrix.getType() <= SkMatrix::kTranslate_Mask &&
-            matrix.getTranslateX() == (int)matrix.getTranslateX() &&
-            matrix.getTranslateY() == (int)matrix.getTranslateY()) {
-            quality = kNone_SkFilterQuality;
-        }
-
-        // See skia:4649 and the GM image_scale_aligned.
-        if (quality == kNone_SkFilterQuality) {
-            if (matrix.getScaleX() >= 0) {
-                matrix.setTranslateX(nextafterf(matrix.getTranslateX(),
-                                                floorf(matrix.getTranslateX())));
-            }
-            if (matrix.getScaleY() >= 0) {
-                matrix.setTranslateY(nextafterf(matrix.getTranslateY(),
-                                                floorf(matrix.getTranslateY())));
-            }
-        }
+        tweak_quality_and_inv_matrix(&quality, &matrix);
         p->append_matrix(alloc, matrix);
     }
 
@@ -421,11 +448,17 @@ bool SkImageShader::doStages(const SkStageRec& rec, SkImageStageUpdater* updater
         void* ctx = gather;
         switch (info.colorType()) {
             case kAlpha_8_SkColorType:      p->append(SkRasterPipeline::gather_a8,      ctx); break;
+            case kA16_unorm_SkColorType:    p->append(SkRasterPipeline::gather_a16,     ctx); break;
+            case kA16_float_SkColorType:    p->append(SkRasterPipeline::gather_af16,    ctx); break;
             case kRGB_565_SkColorType:      p->append(SkRasterPipeline::gather_565,     ctx); break;
             case kARGB_4444_SkColorType:    p->append(SkRasterPipeline::gather_4444,    ctx); break;
-            case kRG_88_SkColorType:        p->append(SkRasterPipeline::gather_rg88,    ctx); break;
+            case kR8G8_unorm_SkColorType:   p->append(SkRasterPipeline::gather_rg88,    ctx); break;
+            case kR16G16_unorm_SkColorType: p->append(SkRasterPipeline::gather_rg1616,  ctx); break;
+            case kR16G16_float_SkColorType: p->append(SkRasterPipeline::gather_rgf16,  ctx);  break;
             case kRGBA_8888_SkColorType:    p->append(SkRasterPipeline::gather_8888,    ctx); break;
             case kRGBA_1010102_SkColorType: p->append(SkRasterPipeline::gather_1010102, ctx); break;
+            case kR16G16B16A16_unorm_SkColorType:
+                                            p->append(SkRasterPipeline::gather_16161616,ctx); break;
             case kRGBA_F16Norm_SkColorType:
             case kRGBA_F16_SkColorType:     p->append(SkRasterPipeline::gather_f16,     ctx); break;
             case kRGBA_F32_SkColorType:     p->append(SkRasterPipeline::gather_f32,     ctx); break;
@@ -450,36 +483,40 @@ bool SkImageShader::doStages(const SkStageRec& rec, SkImageStageUpdater* updater
     };
 
     auto append_misc = [&] {
-        // TODO: if ref.fDstCS isn't null, we'll premul here then immediately unpremul
-        // to do the color space transformation.  Might be possible to streamline.
+        // This is an inessential optimization... it's logically safe to set this to false.
+        // But if...
+        //      - we know the image is definitely normalized, and
+        //      - we're doing some color space conversion, and
+        //      - sRGB curves are involved,
+        // then we can use slightly faster math that doesn't work well outside [0,1].
+        bool src_is_normalized = SkColorTypeIsNormalized(info.colorType());
+
+        SkColorSpace* cs = info.colorSpace();
+        SkAlphaType   at = info.alphaType();
+
+        // Color for A8 images comes from the paint.  TODO: all alpha images?  none?
         if (info.colorType() == kAlpha_8_SkColorType) {
-            // The color for A8 images comes from the (sRGB) paint color.
-            p->append_set_rgb(alloc, rec.fPaint.getColor4f());
-            p->append(SkRasterPipeline::premul);
-        } else if (info.alphaType() == kUnpremul_SkAlphaType) {
-            // Convert unpremul images to premul before we carry on with the rest of the pipeline.
-            p->append(SkRasterPipeline::premul);
+            SkColor4f rgb = rec.fPaint.getColor4f();
+            p->append_set_rgb(alloc, rgb);
+
+            src_is_normalized = rgb.fitsInBytes();
+            cs = sk_srgb_singleton();
+            at = kUnpremul_SkAlphaType;
         }
 
-        if (quality > kLow_SkFilterQuality) {
-            // Bicubic filtering naturally produces out of range values on both sides.
+        // Bicubic filtering naturally produces out of range values on both sides of [0,1].
+        if (quality == kHigh_SkFilterQuality) {
             p->append(SkRasterPipeline::clamp_0);
-            p->append(fClampAsIfUnpremul ? SkRasterPipeline::clamp_1
-                                         : SkRasterPipeline::clamp_a);
+            p->append(at == kUnpremul_SkAlphaType || fClampAsIfUnpremul
+                          ? SkRasterPipeline::clamp_1
+                          : SkRasterPipeline::clamp_a);
+            src_is_normalized = true;
         }
 
-        if (rec.fDstCS) {
-            // If color managed, convert from premul source all the way to premul dst color space.
-            auto srcCS = info.colorSpace();
-            if (!srcCS || info.colorType() == kAlpha_8_SkColorType) {
-                // We treat untagged images as sRGB.
-                // A8 images get their r,g,b from the paint color, so they're also sRGB.
-                srcCS = sk_srgb_singleton();
-            }
-            alloc->make<SkColorSpaceXformSteps>(srcCS     , kPremul_SkAlphaType,
-                                                rec.fDstCS, kPremul_SkAlphaType)
-                ->apply(p, info.colorType());
-        }
+        // Transform color space and alpha type to match shader convention (dst CS, premul alpha).
+        alloc->make<SkColorSpaceXformSteps>(cs, at,
+                                            rec.fDstCS, kPremul_SkAlphaType)
+            ->apply(p, src_is_normalized);
 
         return true;
     };
@@ -567,6 +604,7 @@ bool SkImageShader::doStages(const SkStageRec& rec, SkImageStageUpdater* updater
         p->append(SkRasterPipeline::move_dst_src);
 
     } else {
+        SkASSERT(quality == kHigh_SkFilterQuality);
         p->append(SkRasterPipeline::save_xy, sampler);
 
         sample(SkRasterPipeline::bicubic_n3x, SkRasterPipeline::bicubic_n3y);
@@ -600,8 +638,227 @@ bool SkImageShader::onAppendStages(const SkStageRec& rec) const {
 }
 
 SkStageUpdater* SkImageShader::onAppendUpdatableStages(const SkStageRec& rec) const {
-    auto updater = rec.fAlloc->make<SkImageStageUpdater>();
-    updater->fShader = this;
+    bool usePersp = rec.fCTM.hasPerspective();
+    auto updater = rec.fAlloc->make<SkImageStageUpdater>(this, usePersp);
     return this->doStages(rec, updater) ? updater : nullptr;
+}
+
+bool SkImageShader::onProgram(skvm::Builder* p,
+                              const SkMatrix& ctm, const SkMatrix* localM,
+                              SkFilterQuality quality, SkColorSpace* dstCS,
+                              skvm::Uniforms* uniforms, SkArenaAlloc* alloc,
+                              skvm::F32 x, skvm::F32 y,
+                              skvm::F32* r, skvm::F32* g, skvm::F32* b, skvm::F32* a) const {
+    SkMatrix inv;
+    if (!this->computeTotalInverse(ctm, localM, &inv)) {
+        return false;
+    }
+
+    // We use RequestBitmap() to make sure our SkBitmapController::State lives in the alloc.
+    // This lets the SkVMBlitter hang on to this state and keep our image alive.
+    auto state = SkBitmapController::RequestBitmap(as_IB(fImage.get()), inv, quality, alloc);
+    if (!state) {
+        return false;
+    }
+    const SkPixmap& pm = state->pixmap();
+    inv     = state->invMatrix();
+    quality = state->quality();
+    tweak_quality_and_inv_matrix(&quality, &inv);
+
+    // Apply matrix to convert dst coords to sample center coords.
+    inv.normalizePerspective();
+    if (inv.isIdentity()) {
+        // That was easy.
+    } else if (inv.isTranslate()) {
+        x = p->add(x, p->uniformF(uniforms->pushF(inv[2])));
+        y = p->add(y, p->uniformF(uniforms->pushF(inv[5])));
+    } else if (inv.isScaleTranslate()) {
+        x = p->mad(x, p->uniformF(uniforms->pushF(inv[0])), p->uniformF(uniforms->pushF(inv[2])));
+        y = p->mad(y, p->uniformF(uniforms->pushF(inv[4])), p->uniformF(uniforms->pushF(inv[5])));
+    } else {  // Affine or perspective.
+        auto dot = [&,x,y](int row) {
+            return p->mad(x, p->uniformF(uniforms->pushF(inv[3*row+0])),
+                   p->mad(y, p->uniformF(uniforms->pushF(inv[3*row+1])),
+                             p->uniformF(uniforms->pushF(inv[3*row+2]))));
+        };
+        x = dot(0);
+        y = dot(1);
+        if (inv.hasPerspective()) {
+            x = p->div(x, dot(2));
+            y = p->div(y, dot(2));
+        }
+    }
+
+    // Bail out if sample() can't yet handle our image's color type.
+    switch (pm.colorType()) {
+        default: return false;
+        case   kRGB_565_SkColorType:
+        case kRGBA_8888_SkColorType:
+        case kBGRA_8888_SkColorType: break;
+    }
+
+    auto sample = [&](skvm::F32 sx, skvm::F32 sy) -> skvm::Color {
+        // repeat() and mirror() are written assuming they'll be followed by a [0,scale) clamp.
+        auto repeat = [&](skvm::F32 v, float scale) {
+            skvm::F32 S = p->uniformF(uniforms->pushF(     scale)),
+                      I = p->uniformF(uniforms->pushF(1.0f/scale));
+            // v - floor(v/scale)*scale
+            return p->sub(v, p->mul(p->floor(p->mul(v,I)), S));
+        };
+        auto mirror = [&](skvm::F32 v, float scale) {
+            skvm::F32 S  = p->uniformF(uniforms->pushF(     scale)),
+                      I2 = p->uniformF(uniforms->pushF(0.5f/scale));
+            // abs( (v-scale) - (2*scale)*floor((v-scale)*(0.5f/scale)) - scale )
+            //      {---A---}   {------------------B------------------}
+            skvm::F32 A = p->sub(v,S),
+                      B = p->mul(p->add(S,S), p->floor(p->mul(A,I2)));
+            return p->abs(p->sub(p->sub(A,B), S));
+        };
+        switch (fTileModeX) {
+            case SkTileMode::kDecal:  /* handled after gather */ break;
+            case SkTileMode::kClamp:  /*    we always clamp   */ break;
+            case SkTileMode::kRepeat: sx = repeat(sx, pm.width()); break;
+            case SkTileMode::kMirror: sx = mirror(sx, pm.width()); break;
+        }
+        switch (fTileModeY) {
+            case SkTileMode::kDecal:  /* handled after gather */  break;
+            case SkTileMode::kClamp:  /*    we always clamp   */  break;
+            case SkTileMode::kRepeat: sy = repeat(sy, pm.height()); break;
+            case SkTileMode::kMirror: sy = mirror(sy, pm.height()); break;
+        }
+
+        // Always clamp sample coordinates to [0,width), [0,height), both for memory
+        // safety and to handle the clamps still needed by kClamp, kRepeat, and kMirror.
+        auto clamp = [&](skvm::F32 v, float limit) {
+            // Subtract an ulp so the upper clamp limit excludes limit itself.
+            int bits;
+            memcpy(&bits, &limit, 4);
+            return p->clamp(v, p->splat(0.0f), p->uniformF(uniforms->push(bits-1)));
+        };
+        skvm::F32 clamped_x = clamp(sx, pm. width()),
+                  clamped_y = clamp(sy, pm.height());
+
+        // Load pixels from pm.addr()[(int)sx + (int)sy*stride].
+        skvm::Builder::Uniform img = uniforms->pushPtr(pm.addr());
+        skvm::I32 index = p->add(p->trunc(clamped_x),
+                          p->mul(p->trunc(clamped_y),
+                                 p->uniform32(uniforms->push(pm.rowBytesAsPixels()))));
+        skvm::Color c;
+        switch (pm.colorType()) {
+            default: SkUNREACHABLE;
+            case   kRGB_565_SkColorType: c = p->unpack_565 (p->gather16(img, index)); break;
+            case kRGBA_8888_SkColorType: c = p->unpack_8888(p->gather32(img, index)); break;
+            case kBGRA_8888_SkColorType: c = p->unpack_8888(p->gather32(img, index));
+                                         std::swap(c.r, c.b);
+                                         break;
+        }
+
+        // Mask away any pixels that we tried to sample outside the bounds in kDecal.
+        if (fTileModeX == SkTileMode::kDecal || fTileModeY == SkTileMode::kDecal) {
+            skvm::I32 mask = p->splat(~0);
+            if (fTileModeX == SkTileMode::kDecal) { mask = p->bit_and(mask, p->eq(sx, clamped_x)); }
+            if (fTileModeY == SkTileMode::kDecal) { mask = p->bit_and(mask, p->eq(sy, clamped_y)); }
+            c.r = p->bit_cast(p->bit_and(mask, p->bit_cast(c.r)));
+            c.g = p->bit_cast(p->bit_and(mask, p->bit_cast(c.g)));
+            c.b = p->bit_cast(p->bit_and(mask, p->bit_cast(c.b)));
+            c.a = p->bit_cast(p->bit_and(mask, p->bit_cast(c.a)));
+        }
+
+        return c;
+    };
+
+    if (quality == kNone_SkFilterQuality) {
+        skvm::Color c = sample(x,y);
+        *r = c.r;
+        *g = c.g;
+        *b = c.b;
+        *a = c.a;
+    } else {
+        // All bilinear and bicubic samples have the same fractional offset (fx,fy) from the center.
+        // They're either the 4 corners of a logical 1x1 pixel or the 16 corners of a 3x3 grid
+        // surrounding (x,y) at (0.5,0.5) off-center.
+        skvm::F32 fx = p->fract(p->add(x, p->splat(0.5f))),
+                  fy = p->fract(p->add(y, p->splat(0.5f)));
+
+        // We'll need 2 or 4 weights in each direction for 4 or 16 samples.
+        skvm::F32 wx[4], wy[4];
+        int D;
+
+        if (quality == kLow_SkFilterQuality) {
+            wx[0] = p->sub(p->splat(1.0f), fx);
+            wy[0] = p->sub(p->splat(1.0f), fy);
+            wx[1] = fx;
+            wy[1] = fy;
+            D = 2;
+        } else {
+            // See GrCubicEffect for details of these weights.
+            auto near = [&](skvm::F32 t) {
+                // 1/18 + 9/18t + 27/18t^2 - 21/18t^3 == t ( t ( -21/18t + 27/18) + 9/18) + 1/18
+                return p->mad(t,
+                       p->mad(t,
+                       p->mad(t, p->splat(-21/18.0f),
+                                 p->splat( 27/18.0f)),
+                                 p->splat(  9/18.0f)),
+                                 p->splat(  1/18.0f));
+            };
+            auto far = [&](skvm::F32 t) {
+                // 0/18 + 0/18*t - 6/18t^2 + 7/18t^3 == t^2 (7/18t - 6/18)
+                return p->mul(p->mul(t,t), p->mad(t, p->splat( 7/18.0f),
+                                                     p->splat(-6/18.0f)));
+            };
+            wx[0] = far (p->sub(p->splat(1.0f), fx));
+            wx[1] = near(p->sub(p->splat(1.0f), fx));
+            wx[2] = near(                       fx );
+            wx[3] = far (                       fx );
+
+            wy[0] = far (p->sub(p->splat(1.0f), fy));
+            wy[1] = near(p->sub(p->splat(1.0f), fy));
+            wy[2] = near(                       fy );
+            wy[3] = far (                       fy );
+            D = 4;
+        }
+
+        *r = *g = *b = *a = p->splat(0.0f);
+
+        const skvm::F32 start = p->splat(-0.5f*(D-1));  // -0.5 for bilerp, -1.5 for bicubic
+        skvm::F32 sy = p->add(y, start);
+        for (int j = 0; j < D; j++, sy = p->add(sy, p->splat(1.0f))) {
+            skvm::F32 sx = p->add(x, start);
+            for (int i = 0; i < D; i++, sx = p->add(sx, p->splat(1.0f))) {
+                skvm::Color c = sample(sx,sy);
+                skvm::F32 w = p->mul(wx[i], wy[j]);
+
+                *r = p->mad(c.r,w, *r);
+                *g = p->mad(c.g,w, *g);
+                *b = p->mad(c.b,w, *b);
+                *a = p->mad(c.a,w, *a);
+            }
+        }
+    }
+
+    // Bicubic filtering naturally produces out of range values on both sides of [0,1].
+    if (quality == kHigh_SkFilterQuality) {
+        *a = p->clamp(*a, p->splat(0.0f), p->splat(1.0f));
+
+        skvm::F32 limit = (pm.alphaType() == kUnpremul_SkAlphaType || fClampAsIfUnpremul)
+                        ? p->splat(1.0f)
+                        : *a;
+        *r = p->clamp(*r, p->splat(0.0f), limit);
+        *g = p->clamp(*g, p->splat(0.0f), limit);
+        *b = p->clamp(*b, p->splat(0.0f), limit);
+    }
+
+    // Follow SkColorSpaceXformSteps to match shader output convention (dstCS, premul).
+    // TODO: may need to extend lifetime once doing actual transforms?  maybe all in uniforms.
+    auto flags = SkColorSpaceXformSteps{pm.colorSpace(), pm.alphaType(),
+                                        dstCS, kPremul_SkAlphaType}.flags;
+
+    // TODO: once this all works, move it to SkColorSpaceXformSteps
+    if (flags.unpremul)        { p->unpremul(r,g,b,*a); }
+    if (flags.linearize)       { return false; }
+    if (flags.gamut_transform) { return false; }
+    if (flags.encode)          { return false; }
+    if (flags.premul)          { p->premul(r,g,b,*a); }
+    return true;
 }
 

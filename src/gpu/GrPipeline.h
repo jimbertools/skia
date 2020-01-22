@@ -14,17 +14,18 @@
 #include "src/gpu/GrFragmentProcessor.h"
 #include "src/gpu/GrNonAtomicRef.h"
 #include "src/gpu/GrProcessorSet.h"
-#include "src/gpu/GrProgramDesc.h"
 #include "src/gpu/GrScissorState.h"
+#include "src/gpu/GrSurfaceProxyView.h"
 #include "src/gpu/GrUserStencilSettings.h"
 #include "src/gpu/GrWindowRectsState.h"
 #include "src/gpu/effects/GrCoverageSetOpXP.h"
 #include "src/gpu/effects/GrDisableColorXP.h"
 #include "src/gpu/effects/GrPorterDuffXferProcessor.h"
-#include "src/gpu/effects/generated/GrSimpleTextureEffect.h"
+#include "src/gpu/effects/GrTextureEffect.h"
 #include "src/gpu/geometry/GrRect.h"
 
 class GrAppliedClip;
+class GrAppliedHardClip;
 class GrOp;
 class GrRenderTargetContext;
 
@@ -49,16 +50,27 @@ public:
          */
         kHWAntialias = (1 << 0),
         /**
+         * Cause every pixel to be rasterized that is touched by the triangle anywhere (not just at
+         * pixel center). Additionally, if using MSAA, the sample mask will always have 100%
+         * coverage.
+         * NOTE: The primitive type must be a triangle type.
+         */
+        kConservativeRaster = (1 << 1),
+        /**
+         * Draws triangles as outlines.
+         */
+        kWireframe = (1 << 2),
+        /**
          * Modifies the vertex shader so that vertices will be positioned at pixel centers.
          */
-        kSnapVerticesToPixelCenters = (1 << 1),  // This value must be last. (See kLastInputFlag.)
+        kSnapVerticesToPixelCenters = (1 << 3),  // This value must be last. (See kLastInputFlag.)
     };
 
     struct InitArgs {
         InputFlags fInputFlags = InputFlags::kNone;
         const GrUserStencilSettings* fUserStencil = &GrUserStencilSettings::kUnused;
         const GrCaps* fCaps = nullptr;
-        GrXferProcessor::DstProxy fDstProxy;
+        GrXferProcessor::DstProxyView fDstProxyView;
         GrSwizzle fOutputSwizzle;
     };
 
@@ -72,10 +84,10 @@ public:
     struct FixedDynamicState {
         explicit FixedDynamicState(const SkIRect& scissorRect) : fScissorRect(scissorRect) {}
         FixedDynamicState() = default;
-        SkIRect fScissorRect = SkIRect::EmptyIRect();
+        SkIRect fScissorRect = SkIRect::MakeEmpty();
         // Must have GrPrimitiveProcessor::numTextureSamplers() entries. Can be null if no samplers
         // or textures are passed using DynamicStateArrays.
-        GrTextureProxy** fPrimitiveProcessorTextures = nullptr;
+        GrSurfaceProxy** fPrimitiveProcessorTextures = nullptr;
     };
 
     /**
@@ -87,7 +99,7 @@ public:
         // Must have GrPrimitiveProcessor::numTextureSamplers() * num_meshes entries.
         // Can be null if no samplers or to use the same textures for all meshes via'
         // FixedDynamicState.
-        GrTextureProxy** fPrimitiveProcessorTextures = nullptr;
+        GrSurfaceProxy** fPrimitiveProcessorTextures = nullptr;
     };
 
     /**
@@ -106,6 +118,7 @@ public:
                InputFlags = InputFlags::kNone,
                const GrUserStencilSettings* = &GrUserStencilSettings::kUnused);
 
+    GrPipeline(const InitArgs& args, sk_sp<const GrXferProcessor>, const GrAppliedHardClip&);
     GrPipeline(const InitArgs&, GrProcessorSet&&, GrAppliedClip&&);
 
     GrPipeline(const GrPipeline&) = delete;
@@ -133,19 +146,24 @@ public:
     }
 
     /**
+     * This returns the GrSurfaceProxyView for the texture used to access the dst color. If the
+     * GrXferProcessor does not use the dst color then the proxy on the GrSurfaceProxyView will be
+     * nullptr.
+     */
+    const GrSurfaceProxyView& dstProxyView() const {
+        return fDstProxyView;
+    }
+
+    /**
      * If the GrXferProcessor uses a texture to access the dst color, then this returns that
      * texture and the offset to the dst contents within that texture.
      */
-    GrTextureProxy* dstTextureProxy(SkIPoint* offset = nullptr) const {
+    GrTexture* peekDstTexture(SkIPoint* offset = nullptr) const {
         if (offset) {
             *offset = fDstTextureOffset;
         }
 
-        return fDstTextureProxy.get();
-    }
-
-    GrTexture* peekDstTexture(SkIPoint* offset = nullptr) const {
-        if (GrTextureProxy* dstProxy = this->dstTextureProxy(offset)) {
+        if (GrTextureProxy* dstProxy = fDstProxyView.asTextureProxy()) {
             return dstProxy->peekTexture();
         }
 
@@ -176,9 +194,11 @@ public:
 
     const GrWindowRectsState& getWindowRectsState() const { return fWindowRectsState; }
 
-    bool isHWAntialiasState() const { return SkToBool(fFlags & InputFlags::kHWAntialias); }
+    bool isHWAntialiasState() const { return fFlags & InputFlags::kHWAntialias; }
+    bool usesConservativeRaster() const { return fFlags & InputFlags::kConservativeRaster; }
+    bool isWireframe() const { return fFlags & InputFlags::kWireframe; }
     bool snapVerticesToPixelCenters() const {
-        return SkToBool(fFlags & InputFlags::kSnapVerticesToPixelCenters);
+        return fFlags & InputFlags::kSnapVerticesToPixelCenters;
     }
     bool hasStencilClip() const {
         return SkToBool(fFlags & Flags::kHasStencilClip);
@@ -186,19 +206,31 @@ public:
     bool isStencilEnabled() const {
         return SkToBool(fFlags & Flags::kStencilEnabled);
     }
-    SkDEBUGCODE(bool isBad() const { return SkToBool(fFlags & Flags::kIsBad); })
+#ifdef SK_DEBUG
+    bool allProxiesInstantiated() const {
+        for (int i = 0; i < fFragmentProcessors.count(); ++i) {
+            if (!fFragmentProcessors[i]->isInstantiated()) {
+                return false;
+            }
+        }
+        if (fDstProxyView.proxy()) {
+            return fDstProxyView.proxy()->isInstantiated();
+        }
+
+        return true;
+    }
+#endif
 
     GrXferBarrierType xferBarrierType(GrTexture*, const GrCaps&) const;
 
     // Used by Vulkan and Metal to cache their respective pipeline objects
-    uint32_t getBlendInfoKey() const;
+    void genKey(GrProcessorKeyBuilder*, const GrCaps&) const;
 
     const GrSwizzle& outputSwizzle() const { return fOutputSwizzle; }
 
+    void visitProxies(const GrOp::VisitProxyFunc&) const;
+
 private:
-
-    SkDEBUGCODE(void markAsBad() { fFlags |= Flags::kIsBad; })
-
     static constexpr uint8_t kLastInputFlag = (uint8_t)InputFlags::kSnapVerticesToPixelCenters;
 
     /** This is a continuation of the public "InputFlags" enum. */
@@ -206,9 +238,6 @@ private:
         kHasStencilClip = (kLastInputFlag << 1),
         kStencilEnabled = (kLastInputFlag << 2),
         kScissorEnabled = (kLastInputFlag << 3),
-#ifdef SK_DEBUG
-        kIsBad = (kLastInputFlag << 4),
-#endif
     };
 
     GR_DECL_BITFIELD_CLASS_OPS_FRIENDS(Flags);
@@ -217,7 +246,7 @@ private:
 
     using FragmentProcessorArray = SkAutoSTArray<8, std::unique_ptr<const GrFragmentProcessor>>;
 
-    sk_sp<GrTextureProxy> fDstTextureProxy;
+    GrSurfaceProxyView fDstProxyView;
     SkIPoint fDstTextureOffset;
     GrWindowRectsState fWindowRectsState;
     const GrUserStencilSettings* fUserStencilSettings;
@@ -226,7 +255,7 @@ private:
     FragmentProcessorArray fFragmentProcessors;
 
     // This value is also the index in fFragmentProcessors where coverage processors begin.
-    int fNumColorProcessors;
+    int fNumColorProcessors = 0;
 
     GrSwizzle fOutputSwizzle;
 };

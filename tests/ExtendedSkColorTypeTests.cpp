@@ -8,10 +8,10 @@
 #include "include/core/SkImage.h"
 #include "include/core/SkSurface.h"
 #include "src/core/SkAutoPixmapStorage.h"
-#include "src/gpu/GrContextPriv.h"
 
 #include "tests/Test.h"
 #include "tests/TestUtils.h"
+#include "tools/ToolUtils.h"
 
 static constexpr int kSize = 32;
 
@@ -52,19 +52,24 @@ struct TestCase {
 };
 
 static const TestCase gTests[] = {
-    { kAlpha_8_SkColorType,      kPremul_SkAlphaType, kAlpha_SkColorTypeComponentFlag, true  },
-    { kRGB_565_SkColorType,      kOpaque_SkAlphaType, kRGB_SkColorTypeComponentFlags,  true  },
-    { kARGB_4444_SkColorType,    kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, true  },
-    { kRGBA_8888_SkColorType,    kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, true  },
-    { kRGB_888x_SkColorType,     kOpaque_SkAlphaType, kRGB_SkColorTypeComponentFlags,  true  },
-    { kBGRA_8888_SkColorType,    kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, true  },
-    { kRGBA_1010102_SkColorType, kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, true  },
-    { kRGB_101010x_SkColorType,  kOpaque_SkAlphaType, kRGB_SkColorTypeComponentFlags,  true  },
-    { kGray_8_SkColorType,       kOpaque_SkAlphaType, kGray_SkColorTypeComponentFlag,  true  },
-    { kRGBA_F16Norm_SkColorType, kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, true  },
-    { kRGBA_F16_SkColorType,     kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, true  },
-    { kRGBA_F32_SkColorType,     kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, true  },
-    { kRG_88_SkColorType,        kOpaque_SkAlphaType, kRG_SkColorTypeComponentFlags,   false }
+    { kAlpha_8_SkColorType,           kPremul_SkAlphaType, kAlpha_SkColorTypeComponentFlag, true  },
+    { kA16_unorm_SkColorType,         kPremul_SkAlphaType, kAlpha_SkColorTypeComponentFlag, false },
+    { kA16_float_SkColorType,         kPremul_SkAlphaType, kAlpha_SkColorTypeComponentFlag, false },
+    { kRGB_565_SkColorType,           kOpaque_SkAlphaType, kRGB_SkColorTypeComponentFlags,  true  },
+    { kARGB_4444_SkColorType,         kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, true  },
+    { kRGBA_8888_SkColorType,         kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, true  },
+    { kRGB_888x_SkColorType,          kOpaque_SkAlphaType, kRGB_SkColorTypeComponentFlags,  true  },
+    { kBGRA_8888_SkColorType,         kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, true  },
+    { kRGBA_1010102_SkColorType,      kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, true  },
+    { kRGB_101010x_SkColorType,       kOpaque_SkAlphaType, kRGB_SkColorTypeComponentFlags,  true  },
+    { kGray_8_SkColorType,            kOpaque_SkAlphaType, kGray_SkColorTypeComponentFlag,  true  },
+    { kRGBA_F16Norm_SkColorType,      kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, true  },
+    { kRGBA_F16_SkColorType,          kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, true  },
+    { kRGBA_F32_SkColorType,          kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, true  },
+    { kR8G8_unorm_SkColorType,        kOpaque_SkAlphaType, kRG_SkColorTypeComponentFlags,   false },
+    { kR16G16_unorm_SkColorType,      kOpaque_SkAlphaType, kRG_SkColorTypeComponentFlags,   false },
+    { kR16G16_float_SkColorType,      kOpaque_SkAlphaType, kRG_SkColorTypeComponentFlags,   false },
+    { kR16G16B16A16_unorm_SkColorType,kPremul_SkAlphaType, kRGBA_SkColorTypeComponentFlags, false },
 };
 
 static void raster_tests(skiatest::Reporter* reporter, const TestCase& test) {
@@ -151,18 +156,18 @@ static void raster_tests(skiatest::Reporter* reporter, const TestCase& test) {
 
 static void compare_pixmaps(skiatest::Reporter* reporter,
                             const SkPixmap& expected, const SkPixmap& actual,
-                            SkColorType nativeCT, const char* label) {
+                            SkColorType ct, const char* label) {
     const float tols[4] = {0.0f, 0.0f, 0.0f, 0};
 
     auto error = std::function<ComparePixmapsErrorReporter>(
-        [reporter, nativeCT, label](int x, int y, const float diffs[4]) {
+        [reporter, ct, label](int x, int y, const float diffs[4]) {
             SkASSERT(x >= 0 && y >= 0);
-            ERRORF(reporter, "%d %s - mismatch at %d, %d (%f, %f, %f %f)",
-                   nativeCT, label, x, y,
+            ERRORF(reporter, "%s %s - mismatch at %d, %d (%f, %f, %f %f)",
+                   ToolUtils::colortype_name(ct), label, x, y,
                    diffs[0], diffs[1], diffs[2], diffs[3]);
         });
 
-    compare_pixels(expected, actual, tols, error);
+    ComparePixels(expected, actual, tols, error);
 }
 
 static void gpu_tests(GrContext* context, skiatest::Reporter* reporter, const TestCase& test) {
@@ -189,9 +194,8 @@ static void gpu_tests(GrContext* context, skiatest::Reporter* reporter, const Te
         GrBackendTexture backendTex;
 
         if (fullInit) {
-            backendTex = context->priv().createBackendTexture(&nativeExpected, 1,
-                                                              GrRenderable::kNo,
-                                                              GrProtected::kNo);
+            backendTex = context->createBackendTexture(&nativeExpected, 1,
+                                                       GrRenderable::kNo, GrProtected::kNo);
         } else {
             backendTex = context->createBackendTexture(kSize, kSize, test.fColorType,
                                                        SkColors::kWhite, GrMipMapped::kNo,

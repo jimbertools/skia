@@ -40,7 +40,8 @@ public:
                                       bool hasMixedSampledCoverage, GrClampType) override {
         return GrProcessorSet::EmptySetAnalysis();
     }
-    CombineResult onCombineIfPossible(GrOp* other, const GrCaps&) override {
+    CombineResult onCombineIfPossible(GrOp* other, GrRecordingContext::Arenas*,
+                                      const GrCaps&) override {
         // We will only make multiple copy ops if they have different source proxies.
         // TODO: make use of texture chaining.
         return CombineResult::kCannotCombine;
@@ -68,7 +69,7 @@ private:
             , fEndStencilResolveInstance(endStencilResolveInstance)
             , fDrawBounds(drawBounds) {
         this->setBounds(SkRect::MakeIWH(fDrawBounds.width(), fDrawBounds.height()),
-                        GrOp::HasAABloat::kNo, GrOp::IsZeroArea::kNo);
+                        GrOp::HasAABloat::kNo, GrOp::IsHairline::kNo);
     }
 
     const sk_sp<const GrCCPerFlushResources> fResources;

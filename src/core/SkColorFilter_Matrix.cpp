@@ -14,6 +14,7 @@
 #include "src/core/SkColorFilter_Matrix.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkReadBuffer.h"
+#include "src/core/SkVM.h"
 #include "src/core/SkWriteBuffer.h"
 
 static uint16_t ComputeFlags(const float matrix[20]) {
@@ -79,18 +80,62 @@ bool SkColorFilter_Matrix::onAppendStages(const SkStageRec& rec, bool shaderIsOp
     return true;
 }
 
+bool SkColorFilter_Matrix::onProgram(skvm::Builder* p,
+                                     SkColorSpace* /*dstCS*/,
+                                     skvm::Uniforms* uniforms,
+                                     skvm::F32* r, skvm::F32* g, skvm::F32* b, skvm::F32* a) const {
+    // TODO: specialize generated code on the 0/1 values of fMatrix?
+    if (fDomain == Domain::kRGBA) {
+        p->unpremul(r,g,b,*a);
+
+        skvm::Builder::Uniform u = uniforms->pushF(fMatrix, 20);
+        auto m = [&](int i) { return p->uniformF(u.ptr, u.offset + 4*i); };
+
+        skvm::F32 rgba[4];
+        for (int j = 0; j < 4; j++) {
+            rgba[j] =        m(4+j*5);
+            rgba[j] = p->mad(m(3+j*5), *a, rgba[j]);
+            rgba[j] = p->mad(m(2+j*5), *b, rgba[j]);
+            rgba[j] = p->mad(m(1+j*5), *g, rgba[j]);
+            rgba[j] = p->mad(m(0+j*5), *r, rgba[j]);
+        }
+        *r = rgba[0];
+        *g = rgba[1];
+        *b = rgba[2];
+        *a = rgba[3];
+
+        p->premul(r,g,b,*a);
+        return true;
+    }
+    return false;
+}
+
 #if SK_SUPPORT_GPU
 #include "src/gpu/effects/generated/GrColorMatrixFragmentProcessor.h"
+#include "src/gpu/effects/generated/GrHSLToRGBFilterEffect.h"
+#include "src/gpu/effects/generated/GrRGBToHSLFilterEffect.h"
 std::unique_ptr<GrFragmentProcessor> SkColorFilter_Matrix::asFragmentProcessor(
-        GrRecordingContext*, const GrColorSpaceInfo&) const {
-    if (fDomain == Domain::kHSLA) {
-        // TODO
-        return nullptr;
+        GrRecordingContext*, const GrColorInfo&) const {
+    switch (fDomain) {
+        case Domain::kRGBA:
+            return GrColorMatrixFragmentProcessor::Make(fMatrix,
+                                                        /* premulInput = */    true,
+                                                        /* clampRGBOutput = */ true,
+                                                        /* premulOutput = */   true);
+        case Domain::kHSLA: {
+            std::unique_ptr<GrFragmentProcessor> series[] = {
+                GrRGBToHSLFilterEffect::Make(),
+                GrColorMatrixFragmentProcessor::Make(fMatrix,
+                                                     /* premulInput = */    false,
+                                                     /* clampRGBOutput = */ false,
+                                                     /* premulOutput = */   false),
+                GrHSLToRGBFilterEffect::Make(),
+            };
+            return GrFragmentProcessor::RunInSeries(series, SK_ARRAY_COUNT(series));
+        }
     }
-    return GrColorMatrixFragmentProcessor::Make(fMatrix,
-                                                /* premulInput = */ true,
-                                                /* clampRGBOutput = */ true,
-                                                /* premulOutput = */ true);
+
+    SkUNREACHABLE;
 }
 
 #endif
@@ -109,7 +154,7 @@ sk_sp<SkColorFilter> SkColorFilters::Matrix(const float array[20]) {
 }
 
 sk_sp<SkColorFilter> SkColorFilters::Matrix(const SkColorMatrix& cm) {
-    return MakeMatrix(cm.fMat, SkColorFilter_Matrix::Domain::kRGBA);
+    return MakeMatrix(cm.fMat.data(), SkColorFilter_Matrix::Domain::kRGBA);
 }
 
 sk_sp<SkColorFilter> SkColorFilters::HSLAMatrix(const float array[20]) {

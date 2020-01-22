@@ -24,7 +24,6 @@ public:
 
     GrGpu* gpu() override { return fGpu; }
     void inlineUpload(GrOpFlushState*, GrDeferredTextureUploadFn&) override {}
-    void insertEventMarker(const char*) override {}
     void begin() override {
         if (GrLoadOp::kClear == fColorLoadOp) {
             this->markRenderTargetDirty();
@@ -35,9 +34,8 @@ public:
     int numDraws() const { return fNumDraws; }
 
 private:
-    void onDraw(const GrPrimitiveProcessor&, const GrPipeline&,
-                const GrPipeline::FixedDynamicState*, const GrPipeline::DynamicStateArrays*,
-                const GrMesh[], int meshCount, const SkRect& bounds) override {
+    void onDraw(const GrProgramInfo&, const GrMesh[], int meshCount,
+                const SkRect& bounds) override {
         this->markRenderTargetDirty();
         ++fNumDraws;
     }
@@ -50,7 +48,6 @@ private:
         if (auto* tex = fRenderTarget->asTexture()) {
             tex->texturePriv().markMipMapsDirty();
         }
-        fRenderTarget->flagAsNeedingResolve();
     }
 
     GrMockGpu* fGpu;

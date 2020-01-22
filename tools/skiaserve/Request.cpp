@@ -71,7 +71,9 @@ SkCanvas* Request::getCanvas() {
 
 sk_sp<SkData> Request::drawToPng(int n, int m) {
     //fDebugCanvas->setOverdrawViz(true);
-    fDebugCanvas->drawTo(this->getCanvas(), n, m);
+    auto* canvas = this->getCanvas();
+    canvas->clear(SK_ColorTRANSPARENT);
+    fDebugCanvas->drawTo(canvas, n, m);
     //fDebugCanvas->setOverdrawViz(false);
     return writeCanvasToPng(this->getCanvas());
 }
@@ -139,8 +141,8 @@ SkSurface* Request::createCPUSurface() {
     auto colorSpace = kRGBA_F16_SkColorType == cap.fColorType
                     ? SkColorSpace::MakeSRGBLinear()
                     : SkColorSpace::MakeSRGB();
-    SkImageInfo info = SkImageInfo::Make(bounds.width(), bounds.height(), cap.fColorType,
-                                         kPremul_SkAlphaType, cap.fSRGB ? colorSpace : nullptr);
+    SkImageInfo info = SkImageInfo::Make(bounds.size(), cap.fColorType, kPremul_SkAlphaType,
+                                         cap.fSRGB ? colorSpace : nullptr);
     return SkSurface::MakeRaster(info).release();
 }
 
@@ -151,8 +153,8 @@ SkSurface* Request::createGPUSurface() {
     auto colorSpace = kRGBA_F16_SkColorType == cap.fColorType
                     ? SkColorSpace::MakeSRGBLinear()
                     : SkColorSpace::MakeSRGB();
-    SkImageInfo info = SkImageInfo::Make(bounds.width(), bounds.height(), cap.fColorType,
-                                         kPremul_SkAlphaType, cap.fSRGB ? colorSpace: nullptr);
+    SkImageInfo info = SkImageInfo::Make(bounds.size(), cap.fColorType, kPremul_SkAlphaType,
+                                         cap.fSRGB ? colorSpace : nullptr);
     SkSurface* surface = SkSurface::MakeRenderTarget(context, SkBudgeted::kNo, info).release();
     return surface;
 }
@@ -213,7 +215,7 @@ bool Request::initPictureFromStream(SkStream* stream) {
     return true;
 }
 
-sk_sp<SkData> Request::getJsonOps(int n) {
+sk_sp<SkData> Request::getJsonOps() {
     SkCanvas* canvas = this->getCanvas();
     SkDynamicMemoryWStream stream;
     SkJSONWriter writer(&stream, SkJSONWriter::Mode::kFast);
@@ -222,20 +224,20 @@ sk_sp<SkData> Request::getJsonOps(int n) {
     writer.appendString("mode", fGPUEnabled ? "gpu" : "cpu");
     writer.appendBool("drawGpuOpBounds", fDebugCanvas->getDrawGpuOpBounds());
     writer.appendS32("colorMode", fColorMode);
-    fDebugCanvas->toJSON(writer, fUrlDataManager, n, canvas);
+    fDebugCanvas->toJSON(writer, fUrlDataManager, canvas);
 
     writer.endObject(); // root
     writer.flush();
     return stream.detachAsData();
 }
 
-sk_sp<SkData> Request::getJsonOpsTask(int n) {
+sk_sp<SkData> Request::getJsonOpsTask() {
     SkCanvas* canvas = this->getCanvas();
     SkASSERT(fGPUEnabled);
     SkDynamicMemoryWStream stream;
     SkJSONWriter writer(&stream, SkJSONWriter::Mode::kFast);
 
-    fDebugCanvas->toJSONOpsTask(writer, n, canvas);
+    fDebugCanvas->toJSONOpsTask(writer, canvas);
 
     writer.flush();
     return stream.detachAsData();

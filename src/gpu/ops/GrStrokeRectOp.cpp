@@ -146,6 +146,7 @@ public:
 
         // If our caller snaps to pixel centers then we have to round out the bounds
         if (inputFlags & Helper::InputFlags::kSnapVerticesToPixelCenters) {
+            SkASSERT(!fStrokeWidth || aaType == GrAAType::kNone);
             viewMatrix.mapRect(&bounds);
             // We want to be consistent with how we snap non-aa lines. To match what we do in
             // GrGLSLVertexShaderBuilder, we first floor all the vertex values and then add half a
@@ -155,9 +156,11 @@ public:
                            SkScalarFloorToScalar(bounds.fRight),
                            SkScalarFloorToScalar(bounds.fBottom));
             bounds.offset(0.5f, 0.5f);
-            this->setBounds(bounds, HasAABloat::kNo, IsZeroArea::kNo);
+            this->setBounds(bounds, HasAABloat::kNo, IsHairline::kNo);
         } else {
-            this->setTransformedBounds(bounds, fViewMatrix, HasAABloat::kNo, IsZeroArea::kNo);
+            HasAABloat aaBloat = (aaType == GrAAType::kNone) ? HasAABloat ::kNo : HasAABloat::kYes;
+            this->setTransformedBounds(bounds, fViewMatrix, aaBloat,
+                                       fStrokeWidth ? IsHairline::kNo : IsHairline::kYes);
         }
     }
 
@@ -173,15 +176,15 @@ public:
 
 private:
     void onPrepareDraws(Target* target) override {
-        sk_sp<GrGeometryProcessor> gp;
+        GrGeometryProcessor* gp;
         {
             using namespace GrDefaultGeoProcFactory;
             Color color(fColor);
             LocalCoords::Type localCoordsType = fHelper.usesLocalCoords()
                                                         ? LocalCoords::kUsePosition_Type
                                                         : LocalCoords::kUnused_Type;
-            gp = GrDefaultGeoProcFactory::Make(target->caps().shaderCaps(), color,
-                                               Coverage::kSolid_Type, localCoordsType,
+            gp = GrDefaultGeoProcFactory::Make(target->allocator(), target->caps().shaderCaps(),
+                                               color, Coverage::kSolid_Type, localCoordsType,
                                                fViewMatrix);
         }
 
@@ -221,11 +224,15 @@ private:
         GrMesh* mesh = target->allocMesh(primType);
         mesh->setNonIndexedNonInstanced(vertexCount);
         mesh->setVertexData(std::move(vertexBuffer), firstVertex);
-        target->recordDraw(std::move(gp), mesh);
+        target->recordDraw(gp, mesh, 1, primType);
     }
 
     void onExecute(GrOpFlushState* flushState, const SkRect& chainBounds) override {
-        fHelper.executeDrawsAndUploads(this, flushState, chainBounds);
+        auto pipeline = GrSimpleMeshDrawOpHelper::CreatePipeline(flushState,
+                                                                 fHelper.detachProcessorSet(),
+                                                                 fHelper.pipelineFlags());
+
+        flushState->executeDrawsAndUploadsForMeshDrawOp(this, chainBounds, pipeline);
     }
 
     // TODO: override onCombineIfPossible
@@ -301,11 +308,12 @@ static void compute_aa_rects(SkRect* devOutside, SkRect* devOutsideAssist, SkRec
     }
 }
 
-static sk_sp<GrGeometryProcessor> create_aa_stroke_rect_gp(const GrShaderCaps* shaderCaps,
-                                                           bool tweakAlphaForCoverage,
-                                                           const SkMatrix& viewMatrix,
-                                                           bool usesLocalCoords,
-                                                           bool wideColor) {
+static GrGeometryProcessor* create_aa_stroke_rect_gp(SkArenaAlloc* arena,
+                                                     const GrShaderCaps* shaderCaps,
+                                                     bool tweakAlphaForCoverage,
+                                                     const SkMatrix& viewMatrix,
+                                                     bool usesLocalCoords,
+                                                     bool wideColor) {
     using namespace GrDefaultGeoProcFactory;
 
     Coverage::Type coverageType =
@@ -315,7 +323,8 @@ static sk_sp<GrGeometryProcessor> create_aa_stroke_rect_gp(const GrShaderCaps* s
     Color::Type colorType =
         wideColor ? Color::kPremulWideColorAttribute_Type: Color::kPremulGrColorAttribute_Type;
 
-    return MakeForDeviceSpace(shaderCaps, colorType, coverageType, localCoordsType, viewMatrix);
+    return MakeForDeviceSpace(arena, shaderCaps, colorType, coverageType,
+                              localCoordsType, viewMatrix);
 }
 
 class AAStrokeRectOp final : public GrMeshDrawOp {
@@ -343,7 +352,7 @@ public:
         SkASSERT(!devInside.isEmpty());
 
         fRects.emplace_back(RectInfo{color, devOutside, devOutside, devInside, false});
-        this->setBounds(devOutside, HasAABloat::kYes, IsZeroArea::kNo);
+        this->setBounds(devOutside, HasAABloat::kYes, IsHairline::kNo);
         fMiterStroke = true;
     }
 
@@ -372,13 +381,13 @@ public:
                          &info.fDegenerate, viewMatrix, rect, stroke.getWidth(), isMiter);
         info.fColor = color;
         if (isMiter) {
-            this->setBounds(info.fDevOutside, HasAABloat::kYes, IsZeroArea::kNo);
+            this->setBounds(info.fDevOutside, HasAABloat::kYes, IsHairline::kNo);
         } else {
             // The outer polygon of the bevel stroke is an octagon specified by the points of a
             // pair of overlapping rectangles where one is wide and the other is narrow.
             SkRect bounds = info.fDevOutside;
             bounds.joinPossiblyEmptyRect(info.fDevOutsideAssist);
-            this->setBounds(bounds, HasAABloat::kYes, IsZeroArea::kNo);
+            this->setBounds(bounds, HasAABloat::kYes, IsHairline::kNo);
         }
     }
 
@@ -435,7 +444,7 @@ private:
     const SkMatrix& viewMatrix() const { return fViewMatrix; }
     bool miterStroke() const { return fMiterStroke; }
 
-    CombineResult onCombineIfPossible(GrOp* t, const GrCaps&) override;
+    CombineResult onCombineIfPossible(GrOp* t, GrRecordingContext::Arenas*, const GrCaps&) override;
 
     void generateAAStrokeRectGeometry(GrVertexWriter& vertices,
                                       const SkPMColor4f& color,
@@ -466,11 +475,12 @@ private:
 };
 
 void AAStrokeRectOp::onPrepareDraws(Target* target) {
-    sk_sp<GrGeometryProcessor> gp(create_aa_stroke_rect_gp(target->caps().shaderCaps(),
-                                                           fHelper.compatibleWithCoverageAsAlpha(),
-                                                           this->viewMatrix(),
-                                                           fHelper.usesLocalCoords(),
-                                                           fWideColor));
+    GrGeometryProcessor* gp = create_aa_stroke_rect_gp(target->allocator(),
+                                                       target->caps().shaderCaps(),
+                                                       fHelper.compatibleWithCoverageAsAlpha(),
+                                                       this->viewMatrix(),
+                                                       fHelper.usesLocalCoords(),
+                                                       fWideColor);
     if (!gp) {
         SkDebugf("Couldn't create GrGeometryProcessor\n");
         return;
@@ -481,6 +491,7 @@ void AAStrokeRectOp::onPrepareDraws(Target* target) {
     int verticesPerInstance = (outerVertexNum + innerVertexNum) * 2;
     int indicesPerInstance = this->miterStroke() ? kMiterIndexCnt : kBevelIndexCnt;
     int instanceCount = fRects.count();
+    int maxQuads = this->miterStroke() ? kNumMiterRectsInIndexBuffer : kNumBevelRectsInIndexBuffer;
 
     sk_sp<const GrGpuBuffer> indexBuffer =
             GetIndexBuffer(target->resourceProvider(), this->miterStroke());
@@ -490,7 +501,7 @@ void AAStrokeRectOp::onPrepareDraws(Target* target) {
     }
     PatternHelper helper(target, GrPrimitiveType::kTriangles, gp->vertexStride(),
                          std::move(indexBuffer), verticesPerInstance, indicesPerInstance,
-                         instanceCount);
+                         instanceCount, maxQuads);
     GrVertexWriter vertices{ helper.vertices() };
     if (!vertices.fPtr) {
         SkDebugf("Could not allocate vertices\n");
@@ -509,11 +520,15 @@ void AAStrokeRectOp::onPrepareDraws(Target* target) {
                                            info.fDegenerate,
                                            fHelper.compatibleWithCoverageAsAlpha());
     }
-    helper.recordDraw(target, std::move(gp));
+    helper.recordDraw(target, gp);
 }
 
 void AAStrokeRectOp::onExecute(GrOpFlushState* flushState, const SkRect& chainBounds) {
-    fHelper.executeDrawsAndUploads(this, flushState, chainBounds);
+    auto pipeline = GrSimpleMeshDrawOpHelper::CreatePipeline(flushState,
+                                                             fHelper.detachProcessorSet(),
+                                                             fHelper.pipelineFlags());
+
+    flushState->executeDrawsAndUploadsForMeshDrawOp(this, chainBounds, pipeline);
 }
 
 sk_sp<const GrGpuBuffer> AAStrokeRectOp::GetIndexBuffer(GrResourceProvider* resourceProvider,
@@ -537,7 +552,7 @@ sk_sp<const GrGpuBuffer> AAStrokeRectOp::GetIndexBuffer(GrResourceProvider* reso
             3 + 8, 0 + 8, 4 + 8, 4 + 8, 7 + 8, 3 + 8,
         };
         // clang-format on
-        GR_STATIC_ASSERT(SK_ARRAY_COUNT(gMiterIndices) == kMiterIndexCnt);
+        static_assert(SK_ARRAY_COUNT(gMiterIndices) == kMiterIndexCnt);
         GR_DEFINE_STATIC_UNIQUE_KEY(gMiterIndexBufferKey);
         return resourceProvider->findOrCreatePatternedIndexBuffer(
                 gMiterIndices, kMiterIndexCnt, kNumMiterRectsInIndexBuffer, kMiterVertexCnt,
@@ -601,7 +616,7 @@ sk_sp<const GrGpuBuffer> AAStrokeRectOp::GetIndexBuffer(GrResourceProvider* reso
             3 + 16, 0 + 16, 4 + 16, 4 + 16, 7 + 16, 3 + 16,
         };
         // clang-format on
-        GR_STATIC_ASSERT(SK_ARRAY_COUNT(gBevelIndices) == kBevelIndexCnt);
+        static_assert(SK_ARRAY_COUNT(gBevelIndices) == kBevelIndexCnt);
 
         GR_DEFINE_STATIC_UNIQUE_KEY(gBevelIndexBufferKey);
         return resourceProvider->findOrCreatePatternedIndexBuffer(
@@ -610,7 +625,8 @@ sk_sp<const GrGpuBuffer> AAStrokeRectOp::GetIndexBuffer(GrResourceProvider* reso
     }
 }
 
-GrOp::CombineResult AAStrokeRectOp::onCombineIfPossible(GrOp* t, const GrCaps& caps) {
+GrOp::CombineResult AAStrokeRectOp::onCombineIfPossible(GrOp* t, GrRecordingContext::Arenas*,
+                                                        const GrCaps& caps) {
     AAStrokeRectOp* that = t->cast<AAStrokeRectOp>();
 
     if (!fHelper.isCompatible(that->fHelper, caps, this->bounds(), that->bounds())) {
@@ -624,7 +640,9 @@ GrOp::CombineResult AAStrokeRectOp::onCombineIfPossible(GrOp* t, const GrCaps& c
 
     // We apply the viewmatrix to the rect points on the cpu.  However, if the pipeline uses
     // local coords then we won't be able to combine. TODO: Upload local coords as an attribute.
-    if (fHelper.usesLocalCoords() && !this->viewMatrix().cheapEqualTo(that->viewMatrix())) {
+    if (fHelper.usesLocalCoords() &&
+        !SkMatrixPriv::CheapEqual(this->viewMatrix(), that->viewMatrix()))
+    {
         return CombineResult::kCannotCombine;
     }
 
@@ -724,7 +742,7 @@ void AAStrokeRectOp::generateAAStrokeRectGeometry(GrVertexWriter& vertices,
 
         // The innermost rect has 0 coverage...
         vertices.writeQuad(inset_fan(devInside, SK_ScalarHalf, SK_ScalarHalf),
-                           GrVertexColor(SK_PMColor4fTRANSPARENT, wideColor),
+                           outerColor,
                            maybe_coverage(0.0f));
     } else {
         // When the interior rect has become degenerate we smoosh to a single point

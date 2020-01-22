@@ -77,8 +77,7 @@ void GrGLSLXferProcessor::emitCode(const EmitArgs& args) {
             }
 
             fragBuilder->codeAppendf("half4 %s = ", dstColor);
-            fragBuilder->appendTextureLookup(args.fDstTextureSamplerHandle, "_dstTexCoord",
-                                             kHalf2_GrSLType);
+            fragBuilder->appendTextureLookup(args.fDstTextureSamplerHandle, "_dstTexCoord");
             fragBuilder->codeAppend(";");
         } else {
             needsLocalOutColor = args.fShaderCaps->requiresLocalOutputColorForFBFetch();
@@ -113,9 +112,10 @@ void GrGLSLXferProcessor::emitOutputSwizzle(
         GrGLSLXPFragmentBuilder* x, const GrSwizzle& swizzle, const char* outColor,
         const char* outColorSecondary) const {
     if (GrSwizzle::RGBA() != swizzle) {
-        x->codeAppendf("%s = %s.%s;", outColor, outColor, swizzle.c_str());
+        x->codeAppendf("%s = %s.%s;", outColor, outColor, swizzle.asString().c_str());
         if (outColorSecondary) {
-            x->codeAppendf("%s = %s.%s;", outColorSecondary, outColorSecondary, swizzle.c_str());
+            x->codeAppendf("%s = %s.%s;", outColorSecondary, outColorSecondary,
+                           swizzle.asString().c_str());
         }
     }
 }

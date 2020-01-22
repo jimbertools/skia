@@ -9,7 +9,7 @@
 #include "src/gpu/GrXferProcessor.h"
 #include "src/gpu/effects/GrCoverageSetOpXP.h"
 #include "src/gpu/effects/GrPorterDuffXferProcessor.h"
-#include "src/gpu/effects/generated/GrSimpleTextureEffect.h"
+#include "src/gpu/effects/GrTextureEffect.h"
 
 GrPaint::GrPaint(const GrPaint& that)
         : fXPFactory(that.fXPFactory)
@@ -35,26 +35,10 @@ void GrPaint::setCoverageSetOpXPFactory(SkRegion::Op regionOp, bool invertCovera
     this->setXPFactory(GrCoverageSetOpXPFactory::Get(regionOp, invertCoverage));
 }
 
-void GrPaint::addColorTextureProcessor(sk_sp<GrTextureProxy> proxy, const SkMatrix& matrix) {
-    this->addColorFragmentProcessor(GrSimpleTextureEffect::Make(std::move(proxy), matrix));
-}
-
-void GrPaint::addColorTextureProcessor(sk_sp<GrTextureProxy> proxy, const SkMatrix& matrix,
-                                       const GrSamplerState& samplerState) {
-    this->addColorFragmentProcessor(GrSimpleTextureEffect::Make(std::move(proxy), matrix,
-                                                                samplerState));
-}
-
-void GrPaint::addCoverageTextureProcessor(sk_sp<GrTextureProxy> proxy,
-                                          const SkMatrix& matrix) {
-    this->addCoverageFragmentProcessor(GrSimpleTextureEffect::Make(std::move(proxy), matrix));
-}
-
-void GrPaint::addCoverageTextureProcessor(sk_sp<GrTextureProxy> proxy,
-                                          const SkMatrix& matrix,
-                                          const GrSamplerState& params) {
-    this->addCoverageFragmentProcessor(GrSimpleTextureEffect::Make(std::move(proxy), matrix,
-                                                                   params));
+void GrPaint::addColorTextureProcessor(sk_sp<GrTextureProxy> proxy, SkAlphaType alphaType,
+                                       const SkMatrix& matrix, const GrSamplerState& samplerState) {
+    this->addColorFragmentProcessor(
+            GrTextureEffect::Make(std::move(proxy), alphaType, matrix, samplerState));
 }
 
 bool GrPaint::isConstantBlendedColor(SkPMColor4f* constantColor) const {

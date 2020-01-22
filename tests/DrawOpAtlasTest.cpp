@@ -50,7 +50,7 @@ static const int kAtlasSize = kNumPlots * kPlotSize;
 int GrDrawOpAtlas::numAllocated_TestingOnly() const {
     int count = 0;
     for (uint32_t i = 0; i < this->maxPages(); ++i) {
-        if (fProxies[i]->isInstantiated()) {
+        if (fViews[i].proxy()->isInstantiated()) {
             ++count;
         }
     }
@@ -192,8 +192,8 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrAtlasTextOpPreparation, reporter, ctxInfo) 
     auto textContext = drawingManager->getTextContext();
     auto opMemoryPool = context->priv().opMemoryPool();
 
-    auto rtc = context->priv().makeDeferredRenderTargetContext(SkBackingFit::kApprox, 32, 32,
-                                                               GrColorType::kRGBA_8888, nullptr);
+    auto rtc = GrRenderTargetContext::Make(
+            context, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kApprox, {32, 32});
 
     SkPaint paint;
     paint.setColor(SK_ColorRED);
@@ -211,19 +211,19 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrAtlasTextOpPreparation, reporter, ctxInfo) 
     TestingUploadTarget uploadTarget;
 
     GrOpFlushState flushState(gpu, resourceProvider, uploadTarget.writeableTokenTracker());
-    GrOpFlushState::OpArgs opArgs = {
-        op.get(),
-        rtc->asRenderTargetProxy(),
-        nullptr,
-        rtc->asRenderTargetProxy()->outputSwizzle(),
-        GrXferProcessor::DstProxy(nullptr, SkIPoint::Make(0, 0))
-    };
+
+    GrSurfaceProxyView surfaceView = rtc->outputSurfaceView();
+    GrOpFlushState::OpArgs opArgs(op.get(),
+                                  &surfaceView,
+                                  nullptr,
+                                  GrXferProcessor::DstProxyView(GrSurfaceProxyView(),
+                                                                SkIPoint::Make(0, 0)));
 
     // Cripple the atlas manager so it can't allocate any pages. This will force a failure
     // in the preparation of the text op
     auto atlasManager = context->priv().getAtlasManager();
     unsigned int numProxies;
-    atlasManager->getProxies(kA8_GrMaskFormat, &numProxies);
+    atlasManager->getViews(kA8_GrMaskFormat, &numProxies);
     atlasManager->setMaxPages_TestingOnly(0);
 
     flushState.setOpArgs(&opArgs);

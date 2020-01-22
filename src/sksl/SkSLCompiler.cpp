@@ -28,6 +28,11 @@
 #include "src/sksl/ir/SkSLUnresolvedFunction.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 
+#if !defined(SKSL_STANDALONE) & SK_SUPPORT_GPU
+#include "include/gpu/GrContextOptions.h"
+#include "src/gpu/GrShaderCaps.h"
+#endif
+
 #ifdef SK_ENABLE_SPIRV_VALIDATION
 #include "spirv-tools/libspirv.hpp"
 #endif
@@ -38,6 +43,10 @@
 
 static const char* SKSL_GPU_INCLUDE =
 #include "sksl_gpu.inc"
+;
+
+static const char* SKSL_BLEND_INCLUDE =
+#include "sksl_blend.inc"
 ;
 
 static const char* SKSL_INTERP_INCLUDE =
@@ -66,6 +75,32 @@ static const char* SKSL_PIPELINE_INCLUDE =
 ;
 
 namespace SkSL {
+
+static void grab_intrinsics(std::vector<std::unique_ptr<ProgramElement>>* src,
+               std::map<StringFragment, std::pair<std::unique_ptr<ProgramElement>, bool>>* target) {
+    for (auto& element : *src) {
+        switch (element->fKind) {
+            case ProgramElement::kFunction_Kind: {
+                FunctionDefinition& f = (FunctionDefinition&) *element;
+                StringFragment name = f.fDeclaration.fName;
+                SkASSERT(target->find(name) == target->end());
+                (*target)[name] = std::make_pair(std::move(element), false);
+                break;
+            }
+            case ProgramElement::kEnum_Kind: {
+                Enum& e = (Enum&) *element;
+                StringFragment name = e.fTypeName;
+                SkASSERT(target->find(name) == target->end());
+                (*target)[name] = std::make_pair(std::move(element), false);
+                break;
+            }
+            default:
+                printf("unsupported include file element\n");
+                SkASSERT(false);
+        }
+    }
+}
+
 
 Compiler::Compiler(Flags flags)
 : fFlags(flags)
@@ -210,7 +245,6 @@ Compiler::Compiler(Flags flags)
     ADD_TYPE(GSampler2DArrayShadow);
     ADD_TYPE(GSamplerCubeArrayShadow);
     ADD_TYPE(FragmentProcessor);
-    ADD_TYPE(SkRasterPipeline);
     ADD_TYPE(Sampler);
     ADD_TYPE(Texture2D);
 
@@ -224,9 +258,17 @@ Compiler::Compiler(Flags flags)
                                     *fContext->fSkArgs_Type, Variable::kGlobal_Storage);
     fIRGenerator->fSymbolTable->add(skArgsName, std::unique_ptr<Symbol>(skArgs));
 
-    std::vector<std::unique_ptr<ProgramElement>> ignored;
+    fIRGenerator->fIntrinsics = &fGPUIntrinsics;
+    std::vector<std::unique_ptr<ProgramElement>> gpuIntrinsics;
     this->processIncludeFile(Program::kFragment_Kind, SKSL_GPU_INCLUDE, strlen(SKSL_GPU_INCLUDE),
-                             symbols, &ignored, &fGpuSymbolTable);
+                             symbols, &gpuIntrinsics, &fGpuSymbolTable);
+    this->processIncludeFile(Program::kFragment_Kind, SKSL_BLEND_INCLUDE,
+                             strlen(SKSL_BLEND_INCLUDE), std::move(fGpuSymbolTable), &gpuIntrinsics,
+                             &fGpuSymbolTable);
+    grab_intrinsics(&gpuIntrinsics, &fGPUIntrinsics);
+    // need to hang on to the source so that FunctionDefinition.fSource pointers in this file
+    // remain valid
+    fGpuIncludeSource = std::move(fIRGenerator->fFile);
     this->processIncludeFile(Program::kVertex_Kind, SKSL_VERT_INCLUDE, strlen(SKSL_VERT_INCLUDE),
                              fGpuSymbolTable, &fVertexInclude, &fVertexSymbolTable);
     this->processIncludeFile(Program::kFragment_Kind, SKSL_FRAG_INCLUDE, strlen(SKSL_FRAG_INCLUDE),
@@ -236,9 +278,11 @@ Compiler::Compiler(Flags flags)
     this->processIncludeFile(Program::kPipelineStage_Kind, SKSL_PIPELINE_INCLUDE,
                              strlen(SKSL_PIPELINE_INCLUDE), fGpuSymbolTable, &fPipelineInclude,
                              &fPipelineSymbolTable);
+    std::vector<std::unique_ptr<ProgramElement>> interpIntrinsics;
     this->processIncludeFile(Program::kGeneric_Kind, SKSL_INTERP_INCLUDE,
                              strlen(SKSL_INTERP_INCLUDE), symbols, &fInterpreterInclude,
                              &fInterpreterSymbolTable);
+    grab_intrinsics(&interpIntrinsics, &fInterpreterIntrinsics);
 }
 
 Compiler::~Compiler() {
@@ -249,8 +293,17 @@ void Compiler::processIncludeFile(Program::Kind kind, const char* src, size_t le
                                   std::shared_ptr<SymbolTable> base,
                                   std::vector<std::unique_ptr<ProgramElement>>* outElements,
                                   std::shared_ptr<SymbolTable>* outSymbolTable) {
+#ifdef SK_DEBUG
+    String source(src, length);
+    fSource = &source;
+#endif
     fIRGenerator->fSymbolTable = std::move(base);
     Program::Settings settings;
+#if !defined(SKSL_STANDALONE) & SK_SUPPORT_GPU
+    GrContextOptions opts;
+    GrShaderCaps caps(opts);
+    settings.fCaps = &caps;
+#endif
     fIRGenerator->start(&settings, nullptr);
     fIRGenerator->convertProgram(kind, src, length, *fTypes, outElements);
     if (this->fErrorCount) {
@@ -259,6 +312,9 @@ void Compiler::processIncludeFile(Program::Kind kind, const char* src, size_t le
     SkASSERT(!fErrorCount);
     fIRGenerator->fSymbolTable->markAllFunctionsBuiltin();
     *outSymbolTable = fIRGenerator->fSymbolTable;
+#ifdef SK_DEBUG
+    fSource = nullptr;
+#endif
 }
 
 // add the definition created by assigning to the lvalue to the definition set
@@ -470,7 +526,8 @@ static bool is_dead(const Expression& lvalue) {
             return is_dead(*((FieldAccess&) lvalue).fBase);
         case Expression::kIndex_Kind: {
             const IndexExpression& idx = (IndexExpression&) lvalue;
-            return is_dead(*idx.fBase) && !idx.fIndex->hasSideEffects();
+            return is_dead(*idx.fBase) &&
+                   !idx.fIndex->hasProperty(Expression::Property::kSideEffects);
         }
         case Expression::kTernary_Kind: {
             const TernaryExpression& t = (TernaryExpression&) lvalue;
@@ -479,7 +536,10 @@ static bool is_dead(const Expression& lvalue) {
         case Expression::kExternalValue_Kind:
             return false;
         default:
+#ifdef SK_DEBUG
             ABORT("invalid lvalue: %s\n", lvalue.description().c_str());
+#endif
+            return false;
     }
 }
 
@@ -924,6 +984,50 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
                 default:
                     break;
             }
+            break;
+        }
+        case Expression::kSwizzle_Kind: {
+            Swizzle& s = (Swizzle&) *expr;
+            // detect identity swizzles like foo.rgba
+            if ((int) s.fComponents.size() == s.fBase->fType.columns()) {
+                bool identity = true;
+                for (int i = 0; i < (int) s.fComponents.size(); ++i) {
+                    if (s.fComponents[i] != i) {
+                        identity = false;
+                        break;
+                    }
+                }
+                if (identity) {
+                    *outUpdated = true;
+                    if (!try_replace_expression(&b, iter, &s.fBase)) {
+                        *outNeedsRescan = true;
+                        return;
+                    }
+                    SkASSERT((*iter)->fKind == BasicBlock::Node::kExpression_Kind);
+                    break;
+                }
+            }
+            // detect swizzles of swizzles, e.g. replace foo.argb.r000 with foo.a000
+            if (s.fBase->fKind == Expression::kSwizzle_Kind) {
+                Swizzle& base = (Swizzle&) *s.fBase;
+                std::vector<int> final;
+                for (int c : s.fComponents) {
+                    if (c == SKSL_SWIZZLE_0 || c == SKSL_SWIZZLE_1) {
+                        final.push_back(c);
+                    } else {
+                        final.push_back(base.fComponents[c]);
+                    }
+                }
+                *outUpdated = true;
+                std::unique_ptr<Expression> replacement(new Swizzle(*fContext, base.fBase->clone(),
+                                                                    std::move(final)));
+                if (!try_replace_expression(&b, iter, &replacement)) {
+                    *outNeedsRescan = true;
+                    return;
+                }
+                SkASSERT((*iter)->fKind == BasicBlock::Node::kExpression_Kind);
+                break;
+            }
         }
         default:
             break;
@@ -1247,7 +1351,8 @@ void Compiler::scanCFG(FunctionDefinition& f) {
     // check for missing return
     if (f.fDeclaration.fReturnType != *fContext->fVoid_Type) {
         if (cfg.fBlocks[cfg.fExit].fEntrances.size()) {
-            this->error(f.fOffset, String("function can exit without returning a value"));
+            this->error(f.fOffset, String("function '" + String(f.fDeclaration.fName) +
+                                          "' can exit without returning a value"));
         }
     }
 }
@@ -1270,22 +1375,26 @@ std::unique_ptr<Program> Compiler::convertProgram(Program::Kind kind, String tex
         case Program::kVertex_Kind:
             inherited = &fVertexInclude;
             fIRGenerator->fSymbolTable = fVertexSymbolTable;
+            fIRGenerator->fIntrinsics = &fGPUIntrinsics;
             fIRGenerator->start(&settings, inherited);
             break;
         case Program::kFragment_Kind:
             inherited = &fFragmentInclude;
             fIRGenerator->fSymbolTable = fFragmentSymbolTable;
+            fIRGenerator->fIntrinsics = &fGPUIntrinsics;
             fIRGenerator->start(&settings, inherited);
             break;
         case Program::kGeometry_Kind:
             inherited = &fGeometryInclude;
             fIRGenerator->fSymbolTable = fGeometrySymbolTable;
+            fIRGenerator->fIntrinsics = &fGPUIntrinsics;
             fIRGenerator->start(&settings, inherited);
             break;
         case Program::kFragmentProcessor_Kind:
             inherited = nullptr;
             fIRGenerator->fSymbolTable = fGpuSymbolTable;
             fIRGenerator->start(&settings, nullptr);
+            fIRGenerator->fIntrinsics = &fGPUIntrinsics;
             fIRGenerator->convertProgram(kind, SKSL_FP_INCLUDE, strlen(SKSL_FP_INCLUDE), *fTypes,
                                          &elements);
             fIRGenerator->fSymbolTable->markAllFunctionsBuiltin();
@@ -1293,11 +1402,13 @@ std::unique_ptr<Program> Compiler::convertProgram(Program::Kind kind, String tex
         case Program::kPipelineStage_Kind:
             inherited = &fPipelineInclude;
             fIRGenerator->fSymbolTable = fPipelineSymbolTable;
+            fIRGenerator->fIntrinsics = &fGPUIntrinsics;
             fIRGenerator->start(&settings, inherited);
             break;
         case Program::kGeneric_Kind:
             inherited = &fInterpreterInclude;
             fIRGenerator->fSymbolTable = fInterpreterSymbolTable;
+            fIRGenerator->fIntrinsics = &fInterpreterIntrinsics;
             fIRGenerator->start(&settings, inherited);
             break;
     }
@@ -1487,20 +1598,22 @@ bool Compiler::toH(Program& program, String name, OutputStream& out) {
     return result;
 }
 
-bool Compiler::toPipelineStage(const Program& program, String* out,
-                               std::vector<FormatArg>* outFormatArgs) {
+#endif
+
+#if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
+bool Compiler::toPipelineStage(const Program& program, PipelineStageArgs* outArgs) {
     SkASSERT(program.fIsOptimized);
     fSource = program.fSource.get();
     StringStream buffer;
-    PipelineStageCodeGenerator cg(fContext.get(), &program, this, &buffer, outFormatArgs);
+    PipelineStageCodeGenerator cg(fContext.get(), &program, this, &buffer, &outArgs->fFormatArgs,
+                                  &outArgs->fFunctions);
     bool result = cg.generateCode();
     fSource = nullptr;
     if (result) {
-        *out = buffer.str();
+        outArgs->fCode = buffer.str();
     }
     return result;
 }
-
 #endif
 
 std::unique_ptr<ByteCode> Compiler::toByteCode(Program& program) {

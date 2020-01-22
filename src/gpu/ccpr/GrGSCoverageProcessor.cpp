@@ -8,6 +8,7 @@
 #include "src/gpu/ccpr/GrGSCoverageProcessor.h"
 
 #include "src/gpu/GrMesh.h"
+#include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLVertexGeoBuilder.h"
 
 using InputType = GrGLSLGeometryBuilder::InputType;
@@ -23,8 +24,8 @@ protected:
     virtual bool hasCoverage(const GrGSCoverageProcessor& proc) const { return false; }
 
     void setData(const GrGLSLProgramDataManager& pdman, const GrPrimitiveProcessor&,
-                 FPCoordTransformIter&& transformIter) final {
-        this->setTransformDataHelper(SkMatrix::I(), pdman, &transformIter);
+                 const CoordTransformRange& transformRange) final {
+        this->setTransformDataHelper(SkMatrix::I(), pdman, transformRange);
     }
 
     void onEmitCode(EmitArgs& args, GrGPArgs* gpArgs) final {
@@ -39,7 +40,7 @@ protected:
         this->emitGeometryShader(proc, varyingHandler, args.fGeomBuilder, args.fRTAdjustName);
         varyingHandler->emitAttributes(proc);
         varyingHandler->setNoPerspective();
-        SkASSERT(!args.fFPCoordTransformHandler->nextCoordTransform());
+        SkASSERT(!*args.fFPCoordTransformHandler);
 
         // Fragment shader.
         GrGLSLFPFragmentBuilder* f = args.fFragBuilder;
@@ -414,15 +415,15 @@ void GrGSCoverageProcessor::reset(PrimitiveType primitiveType, GrResourceProvide
     if (4 == this->numInputPoints() || this->hasInputWeight()) {
         fInputXOrYValues =
                 {"x_or_y_values", kFloat4_GrVertexAttribType, kFloat4_GrSLType};
-        GR_STATIC_ASSERT(sizeof(QuadPointInstance) ==
-                         2 * GrVertexAttribTypeSize(kFloat4_GrVertexAttribType));
-        GR_STATIC_ASSERT(offsetof(QuadPointInstance, fY) ==
-                         GrVertexAttribTypeSize(kFloat4_GrVertexAttribType));
+        static_assert(sizeof(QuadPointInstance) ==
+                      2 * GrVertexAttribTypeSize(kFloat4_GrVertexAttribType));
+        static_assert(offsetof(QuadPointInstance, fY) ==
+                      GrVertexAttribTypeSize(kFloat4_GrVertexAttribType));
     } else {
         fInputXOrYValues =
                 {"x_or_y_values", kFloat3_GrVertexAttribType, kFloat3_GrSLType};
-        GR_STATIC_ASSERT(sizeof(TriPointInstance) ==
-                         2 * GrVertexAttribTypeSize(kFloat3_GrVertexAttribType));
+        static_assert(sizeof(TriPointInstance) ==
+                      2 * GrVertexAttribTypeSize(kFloat3_GrVertexAttribType));
     }
 
     this->setVertexAttributes(&fInputXOrYValues, 1);
@@ -446,8 +447,7 @@ void GrGSCoverageProcessor::draw(
     // and does edge AA. The second pass does touch up on corner pixels.
     for (int i = 0; i < 2; ++i) {
         fSubpass = (Subpass) i;
-        this->GrCCCoverageProcessor::draw(
-                flushState, pipeline, scissorRects, meshes, meshCount, drawBounds);
+        INHERITED::draw(flushState, pipeline, scissorRects, meshes, meshCount, drawBounds);
     }
 }
 

@@ -25,8 +25,8 @@
 
 #include "src/gpu/SkGr.h"
 #include "src/gpu/effects/GrTextureDomain.h"
+#include "src/gpu/effects/GrTextureEffect.h"
 #include "src/gpu/effects/generated/GrConstColorProcessor.h"
-#include "src/gpu/effects/generated/GrSimpleTextureEffect.h"
 #endif
 #include "src/core/SkClipOpPriv.h"
 
@@ -118,13 +118,13 @@ sk_sp<SkSpecialImage> SkXfermodeImageFilterImpl::onFilterImage(const Context& ct
     SkIPoint foregroundOffset = SkIPoint::Make(0, 0);
     sk_sp<SkSpecialImage> foreground(this->filterInput(1, ctx, &foregroundOffset));
 
-    SkIRect foregroundBounds = SkIRect::EmptyIRect();
+    SkIRect foregroundBounds = SkIRect::MakeEmpty();
     if (foreground) {
         foregroundBounds = SkIRect::MakeXYWH(foregroundOffset.x(), foregroundOffset.y(),
                                              foreground->width(), foreground->height());
     }
 
-    SkIRect srcBounds = SkIRect::EmptyIRect();
+    SkIRect srcBounds = SkIRect::MakeEmpty();
     if (background) {
         srcBounds = SkIRect::MakeXYWH(backgroundOffset.x(), backgroundOffset.y(),
                                       background->width(), background->height());
@@ -266,10 +266,12 @@ sk_sp<SkSpecialImage> SkXfermodeImageFilterImpl::filterImageGPU(
         SkMatrix bgMatrix = SkMatrix::MakeTrans(
                 SkIntToScalar(bgSubset.left() - backgroundOffset.fX),
                 SkIntToScalar(bgSubset.top()  - backgroundOffset.fY));
-        bgFP = GrTextureDomainEffect::Make(
-                    std::move(backgroundProxy), bgMatrix,
-                    GrTextureDomain::MakeTexelDomain(bgSubset, GrTextureDomain::kDecal_Mode),
-                    GrTextureDomain::kDecal_Mode, GrSamplerState::Filter::kNearest);
+        bgFP = GrTextureEffect::Make(std::move(backgroundProxy), background->alphaType(), bgMatrix,
+                                     GrSamplerState::Filter::kNearest);
+        bgFP = GrDomainEffect::Make(
+                std::move(bgFP),
+                GrTextureDomain::MakeTexelDomain(bgSubset, GrTextureDomain::kDecal_Mode),
+                GrTextureDomain::kDecal_Mode, false);
         bgFP = GrColorSpaceXformEffect::Make(std::move(bgFP), background->getColorSpace(),
                                              background->alphaType(),
                                              ctx.colorSpace());
@@ -283,10 +285,13 @@ sk_sp<SkSpecialImage> SkXfermodeImageFilterImpl::filterImageGPU(
         SkMatrix fgMatrix = SkMatrix::MakeTrans(
                 SkIntToScalar(fgSubset.left() - foregroundOffset.fX),
                 SkIntToScalar(fgSubset.top()  - foregroundOffset.fY));
-        auto foregroundFP = GrTextureDomainEffect::Make(
-                std::move(foregroundProxy), fgMatrix,
+        auto foregroundFP =
+                GrTextureEffect::Make(std::move(foregroundProxy), foreground->alphaType(), fgMatrix,
+                                      GrSamplerState::Filter::kNearest);
+        foregroundFP = GrDomainEffect::Make(
+                std::move(foregroundFP),
                 GrTextureDomain::MakeTexelDomain(fgSubset, GrTextureDomain::kDecal_Mode),
-                GrTextureDomain::kDecal_Mode, GrSamplerState::Filter::kNearest);
+                GrTextureDomain::kDecal_Mode, false);
         foregroundFP = GrColorSpaceXformEffect::Make(std::move(foregroundFP),
                                                      foreground->getColorSpace(),
                                                      foreground->alphaType(),
@@ -305,9 +310,8 @@ sk_sp<SkSpecialImage> SkXfermodeImageFilterImpl::filterImageGPU(
 
     paint.setPorterDuffXPFactory(SkBlendMode::kSrc);
 
-    auto renderTargetContext = context->priv().makeDeferredRenderTargetContext(
-            SkBackingFit::kApprox, bounds.width(), bounds.height(), ctx.grColorType(),
-            ctx.refColorSpace());
+    auto renderTargetContext = GrRenderTargetContext::Make(
+            context, ctx.grColorType(), ctx.refColorSpace(), SkBackingFit::kApprox, bounds.size());
     if (!renderTargetContext) {
         return nullptr;
     }
@@ -317,12 +321,12 @@ sk_sp<SkSpecialImage> SkXfermodeImageFilterImpl::filterImageGPU(
     renderTargetContext->drawRect(GrNoClip(), std::move(paint), GrAA::kNo, matrix,
                                   SkRect::Make(bounds));
 
-    return SkSpecialImage::MakeDeferredFromGpu(
-            context,
-            SkIRect::MakeWH(bounds.width(), bounds.height()),
-            kNeedNewImageUniqueID_SpecialImage,
-            renderTargetContext->asTextureProxyRef(),
-            renderTargetContext->colorSpaceInfo().refColorSpace());
+    return SkSpecialImage::MakeDeferredFromGpu(context,
+                                               SkIRect::MakeWH(bounds.width(), bounds.height()),
+                                               kNeedNewImageUniqueID_SpecialImage,
+                                               renderTargetContext->asTextureProxyRef(),
+                                               renderTargetContext->colorInfo().colorType(),
+                                               renderTargetContext->colorInfo().refColorSpace());
 }
 
 std::unique_ptr<GrFragmentProcessor> SkXfermodeImageFilterImpl::makeFGFrag(

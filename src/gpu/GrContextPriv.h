@@ -17,10 +17,7 @@ class GrBackendRenderTarget;
 class GrOpMemoryPool;
 class GrOnFlushCallbackObject;
 class GrSemaphore;
-class GrSkSLFPFactory;
-class GrSkSLFPFactoryCache;
 class GrSurfaceProxy;
-class GrTextureContext;
 
 class SkDeferredDisplayList;
 class SkTaskGroup;
@@ -41,8 +38,6 @@ public:
     const GrCaps* caps() const { return fContext->caps(); }
     sk_sp<const GrCaps> refCaps() const;
 
-    sk_sp<GrSkSLFPFactoryCache> fpFactoryCache();
-
     GrImageContext* asImageContext() { return fContext->asImageContext(); }
     GrRecordingContext* asRecordingContext() { return fContext->asRecordingContext(); }
     GrContext* asDirectContext() { return fContext->asDirectContext(); }
@@ -59,8 +54,9 @@ public:
     // from GrRecordingContext
     GrDrawingManager* drawingManager() { return fContext->drawingManager(); }
 
-    sk_sp<GrOpMemoryPool> refOpMemoryPool();
-    GrOpMemoryPool* opMemoryPool() { return fContext->opMemoryPool(); }
+    GrOpMemoryPool* opMemoryPool() { return fContext->arenas().opMemoryPool(); }
+    SkArenaAlloc* recordTimeAllocator() { return fContext->arenas().recordTimeAllocator(); }
+    GrRecordingContext::Arenas arenas() { return fContext->arenas(); }
 
     GrStrikeCache* getGrStrikeCache() { return fContext->getGrStrikeCache(); }
     GrTextBlobCache* getTextBlobCache() { return fContext->getTextBlobCache(); }
@@ -73,73 +69,12 @@ public:
      */
     void addOnFlushCallbackObject(GrOnFlushCallbackObject*);
 
-    std::unique_ptr<GrSurfaceContext> makeWrappedSurfaceContext(sk_sp<GrSurfaceProxy>,
-                                                                GrColorType,
-                                                                SkAlphaType,
-                                                                sk_sp<SkColorSpace> = nullptr,
-                                                                const SkSurfaceProps* = nullptr);
-
-    /** Create a new texture context backed by a deferred-style GrTextureProxy. */
-    std::unique_ptr<GrTextureContext> makeDeferredTextureContext(
-            SkBackingFit,
-            int width,
-            int height,
-            GrColorType,
-            SkAlphaType,
-            sk_sp<SkColorSpace>,
-            GrMipMapped = GrMipMapped::kNo,
-            GrSurfaceOrigin = kTopLeft_GrSurfaceOrigin,
-            SkBudgeted = SkBudgeted::kYes,
-            GrProtected = GrProtected::kNo);
-
-    /*
-     * Create a new render target context backed by a deferred-style
-     * GrRenderTargetProxy. We guarantee that "asTextureProxy" will succeed for
-     * renderTargetContexts created via this entry point.
-     */
-    std::unique_ptr<GrRenderTargetContext> makeDeferredRenderTargetContext(
-            SkBackingFit fit,
-            int width,
-            int height,
-            GrColorType,
-            sk_sp<SkColorSpace> colorSpace,
-            int sampleCnt = 1,
-            GrMipMapped = GrMipMapped::kNo,
-            GrSurfaceOrigin origin = kBottomLeft_GrSurfaceOrigin,
-            const SkSurfaceProps* surfaceProps = nullptr,
-            SkBudgeted = SkBudgeted::kYes,
-            GrProtected isProtected = GrProtected::kNo);
-
-    /*
-     * This method will attempt to create a renderTargetContext that has, at least, the number of
-     * channels and precision per channel as requested in 'config' (e.g., A8 and 888 can be
-     * converted to 8888). It may also swizzle the channels (e.g., BGRA -> RGBA).
-     * SRGB-ness will be preserved.
-     */
-    std::unique_ptr<GrRenderTargetContext> makeDeferredRenderTargetContextWithFallback(
-            SkBackingFit fit,
-            int width,
-            int height,
-            GrColorType,
-            sk_sp<SkColorSpace> colorSpace,
-            int sampleCnt = 1,
-            GrMipMapped = GrMipMapped::kNo,
-            GrSurfaceOrigin origin = kBottomLeft_GrSurfaceOrigin,
-            const SkSurfaceProps* surfaceProps = nullptr,
-            SkBudgeted budgeted = SkBudgeted::kYes);
-
     GrAuditTrail* auditTrail() { return fContext->auditTrail(); }
 
     /**
      * Create a GrContext without a resource cache
      */
     static sk_sp<GrContext> MakeDDL(const sk_sp<GrContextThreadSafeProxy>&);
-
-    std::unique_ptr<GrTextureContext> makeBackendTextureContext(const GrBackendTexture&,
-                                                                GrSurfaceOrigin,
-                                                                GrColorType,
-                                                                SkAlphaType,
-                                                                sk_sp<SkColorSpace>);
 
     // These match the definitions in SkSurface & GrSurface.h, for whence they came
     typedef void* ReleaseContext;
@@ -227,6 +162,10 @@ public:
         return fContext->fShaderErrorHandler;
     }
 
+    GrClientMappedBufferManager* clientMappedBufferManager() {
+        return fContext->fMappedBufferManager.get();
+    }
+
 #if GR_TEST_UTILS
     /** Reset GPU stats */
     void resetGpuStats() const ;
@@ -259,15 +198,6 @@ public:
 
     void testingOnly_flushAndRemoveOnFlushCallbackObject(GrOnFlushCallbackObject*);
 #endif
-
-    // If possible, create a backend texture initialized with the provided pixmap data. The client
-    // should ensure that the returned backend texture is valid.
-    // If successful, the created backend texture will be compatible with the provided
-    // pixmap(s).
-    // If numLevels is 1 a non-mipMapped texture will result. If a mipMapped texture is desired
-    // the data for all the mipmap levels must be provided.
-    GrBackendTexture createBackendTexture(const SkPixmap srcData[], int numLevels,
-                                          GrRenderable, GrProtected);
 
 private:
     explicit GrContextPriv(GrContext* context) : fContext(context) {}

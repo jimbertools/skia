@@ -8,13 +8,17 @@
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/vk/GrVkBackendContext.h"
 #include "include/gpu/vk/GrVkExtensions.h"
+#include "src/gpu/GrProgramDesc.h"
 #include "src/gpu/GrRenderTarget.h"
 #include "src/gpu/GrRenderTargetProxy.h"
 #include "src/gpu/GrShaderCaps.h"
+#include "src/gpu/GrStencilSettings.h"
 #include "src/gpu/GrUtil.h"
 #include "src/gpu/SkGr.h"
 #include "src/gpu/vk/GrVkCaps.h"
+#include "src/gpu/vk/GrVkGpu.h"
 #include "src/gpu/vk/GrVkInterface.h"
+#include "src/gpu/vk/GrVkRenderTarget.h"
 #include "src/gpu/vk/GrVkTexture.h"
 #include "src/gpu/vk/GrVkUniformHandler.h"
 #include "src/gpu/vk/GrVkUtil.h"
@@ -32,7 +36,6 @@ GrVkCaps::GrVkCaps(const GrContextOptions& contextOptions, const GrVkInterface* 
      * GrCaps fields
      **************************************************************************/
     fMipMapSupport = true;   // always available in Vulkan
-    fSRGBSupport = true;   // always available in Vulkan
     fNPOTTextureTileSupport = true;  // always available in Vulkan
     fReuseScratchTextures = true; //TODO: figure this out
     fGpuTracingSupport = false; //TODO: figure this out
@@ -72,7 +75,7 @@ enum class FormatCompatibilityClass {
     k24_3_1,
     k32_4_1,
     k64_8_1,
-    k128_16_1,
+    kBC1_RGB_8_16,
     kETC2_RGB_8_16,
 };
 }  // anonymous namespace
@@ -105,10 +108,11 @@ static FormatCompatibilityClass format_compatibility_class(VkFormat format) {
         case VK_FORMAT_R8G8B8_UNORM:
             return FormatCompatibilityClass::k24_3_1;
 
-        case VK_FORMAT_R32G32B32A32_SFLOAT:
-            return FormatCompatibilityClass::k128_16_1;
         case VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:
             return FormatCompatibilityClass::kETC2_RGB_8_16;
+
+        case VK_FORMAT_BC1_RGB_UNORM_BLOCK:
+            return FormatCompatibilityClass::kBC1_RGB_8_16;
 
         default:
             SK_ABORT("Unsupported VkFormat");
@@ -179,7 +183,7 @@ bool GrVkCaps::canCopyAsResolve(VkFormat dstFormat, int dstSampleCnt, bool dstHa
 
 bool GrVkCaps::onCanCopySurface(const GrSurfaceProxy* dst, const GrSurfaceProxy* src,
                                 const SkIRect& srcRect, const SkIPoint& dstPoint) const {
-    if (src->isProtected() && !dst->isProtected()) {
+    if (src->isProtected() == GrProtected::kYes && dst->isProtected() != GrProtected::kYes) {
         return false;
     }
 
@@ -358,15 +362,6 @@ void GrVkCaps::init(const GrContextOptions& contextOptions, const GrVkInterface*
     this->initGrCaps(vkInterface, physDev, properties, memoryProperties, features, extensions);
     this->initShaderCaps(properties, features);
 
-    if (!contextOptions.fDisableDriverCorrectnessWorkarounds) {
-#if defined(SK_CPU_X86)
-        // We need to do this before initing the config table since it uses fSRGBSupport
-        if (kImagination_VkVendor == properties.vendorID) {
-            fSRGBSupport = false;
-        }
-#endif
-    }
-
     if (kQualcomm_VkVendor == properties.vendorID) {
         // A "clear" load for the CCPR atlas runs faster on QC than a "discard" load followed by a
         // scissored clear.
@@ -401,8 +396,7 @@ void GrVkCaps::init(const GrContextOptions& contextOptions, const GrVkInterface*
         this->applyDriverCorrectnessWorkarounds(properties);
     }
 
-    this->applyOptionsOverrides(contextOptions);
-    fShaderCaps->applyOptionsOverrides(contextOptions);
+    this->finishInitialization(contextOptions);
 }
 
 void GrVkCaps::applyDriverCorrectnessWorkarounds(const VkPhysicalDeviceProperties& properties) {
@@ -438,9 +432,36 @@ void GrVkCaps::applyDriverCorrectnessWorkarounds(const VkPhysicalDevicePropertie
         fShouldAlwaysUseDedicatedImageMemory = true;
     }
 
+    // On Mali galaxy s7 and s9 we see lots of rendering issues with image filters dropping out when
+    // using only primary command buffers.
+    if (kARM_VkVendor == properties.vendorID) {
+        fPreferPrimaryOverSecondaryCommandBuffers = false;
+    }
+
+    // On various devices, when calling vkCmdClearAttachments on a primary command buffer, it
+    // corrupts the bound buffers on the command buffer. As a workaround we invalidate our knowledge
+    // of bound buffers so that we will rebind them on the next draw.
+    if (kQualcomm_VkVendor == properties.vendorID || kAMD_VkVendor == properties.vendorID) {
+        fMustInvalidatePrimaryCmdBufferStateAfterClearAttachments = true;
+    }
+
     ////////////////////////////////////////////////////////////////////////////
     // GrCaps workarounds
     ////////////////////////////////////////////////////////////////////////////
+
+    // The GTX660 bot experiences crashes and incorrect rendering with MSAA CCPR. Block this path
+    // renderer on non-mixed-sampled NVIDIA.
+    // NOTE: We may lose mixed samples support later if the context options suppress dual source
+    // blending, but that shouldn't be an issue because MSAA CCPR seems to work fine (even without
+    // mixed samples) on later NVIDIA hardware where mixed samples would be supported.
+    if ((kNvidia_VkVendor == properties.vendorID) && !fMixedSamplesSupport) {
+        fDriverBlacklistMSAACCPR = true;
+    }
+
+#ifdef SK_BUILD_FOR_ANDROID
+    // MSAA CCPR is slow on Android. http://skbug.com/9676
+    fDriverBlacklistMSAACCPR = true;
+#endif
 
     if (kARM_VkVendor == properties.vendorID) {
         fInstanceAttribSupport = false;
@@ -459,29 +480,12 @@ void GrVkCaps::applyDriverCorrectnessWorkarounds(const VkPhysicalDevicePropertie
     if (kImagination_VkVendor == properties.vendorID) {
         fShaderCaps->fAtan2ImplementedAsAtanYOverX = true;
     }
-}
 
-int get_max_sample_count(VkSampleCountFlags flags) {
-    SkASSERT(flags & VK_SAMPLE_COUNT_1_BIT);
-    if (!(flags & VK_SAMPLE_COUNT_2_BIT)) {
-        return 0;
+    if (kQualcomm_VkVendor == properties.vendorID) {
+        // The sample mask round rect op draws nothing on Adreno for the srcmode gm.
+        // http://skbug.com/8921
+        fShaderCaps->fCanOnlyUseSampleMaskWithStencil = true;
     }
-    if (!(flags & VK_SAMPLE_COUNT_4_BIT)) {
-        return 2;
-    }
-    if (!(flags & VK_SAMPLE_COUNT_8_BIT)) {
-        return 4;
-    }
-    if (!(flags & VK_SAMPLE_COUNT_16_BIT)) {
-        return 8;
-    }
-    if (!(flags & VK_SAMPLE_COUNT_32_BIT)) {
-        return 16;
-    }
-    if (!(flags & VK_SAMPLE_COUNT_64_BIT)) {
-        return 32;
-    }
-    return 64;
 }
 
 void GrVkCaps::initGrCaps(const GrVkInterface* vkInterface,
@@ -496,6 +500,25 @@ void GrVkCaps::initGrCaps(const GrVkInterface* vkInterface,
     // we ever find that need.
     static const uint32_t kMaxVertexAttributes = 64;
     fMaxVertexAttributes = SkTMin(properties.limits.maxVertexInputAttributes, kMaxVertexAttributes);
+
+    if (properties.limits.standardSampleLocations) {
+        fSampleLocationsSupport = true;
+    }
+
+    if (extensions.hasExtension(VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME, 1)) {
+        // We "disable" multisample by colocating all samples at pixel center.
+        fMultisampleDisableSupport = true;
+    }
+
+    if (extensions.hasExtension(VK_NV_FRAMEBUFFER_MIXED_SAMPLES_EXTENSION_NAME, 1)) {
+        fMixedSamplesSupport = true;
+    }
+
+    if (extensions.hasExtension(VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME, 1)) {
+        fConservativeRasterSupport = true;
+    }
+
+    fWireframeSupport = true;
 
     // We could actually query and get a max size for each config, however maxImageDimension2D will
     // give the minimum max size across all configs. So for simplicity we will use that for now.
@@ -563,7 +586,7 @@ void GrVkCaps::initShaderCaps(const VkPhysicalDeviceProperties& properties,
     // to be true with Vulkan as well.
     shaderCaps->fPreferFlatInterpolation = kQualcomm_VkVendor != properties.vendorID;
 
-    // GrShaderCaps
+    shaderCaps->fSampleMaskSupport = true;
 
     shaderCaps->fShaderDerivativeSupport = true;
 
@@ -642,14 +665,13 @@ static constexpr VkFormat kVkFormats[] = {
     VK_FORMAT_A2B10G10R10_UNORM_PACK32,
     VK_FORMAT_B4G4R4A4_UNORM_PACK16,
     VK_FORMAT_R4G4B4A4_UNORM_PACK16,
-    VK_FORMAT_R32G32B32A32_SFLOAT,
     VK_FORMAT_R8G8B8A8_SRGB,
     VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK,
+    VK_FORMAT_BC1_RGB_UNORM_BLOCK,
     VK_FORMAT_R16_UNORM,
     VK_FORMAT_R16G16_UNORM,
     VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM,
     VK_FORMAT_G8_B8R8_2PLANE_420_UNORM,
-    // Experimental (for Y416 and mutant P016/P010)
     VK_FORMAT_R16G16B16A16_UNORM,
     VK_FORMAT_R16G16_SFLOAT,
 };
@@ -715,6 +737,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 4;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 2;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -732,7 +755,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
                 auto& ctInfo = info.fColorTypeInfos[ctIdx++];
                 ctInfo.fColorType = ct;
                 ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag;
-                ctInfo.fTextureSwizzle = GrSwizzle::RGB1();
+                ctInfo.fReadSwizzle = GrSwizzle::RGB1();
             }
         }
     }
@@ -742,6 +765,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_R8_UNORM;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 1;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 2;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -752,7 +776,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
                 auto& ctInfo = info.fColorTypeInfos[ctIdx++];
                 ctInfo.fColorType = ct;
                 ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag | ColorTypeInfo::kRenderable_Flag;
-                ctInfo.fTextureSwizzle = GrSwizzle::RRRR();
+                ctInfo.fReadSwizzle = GrSwizzle::RRRR();
                 ctInfo.fOutputSwizzle = GrSwizzle::AAAA();
             }
             // Format: VK_FORMAT_R8_UNORM, Surface: kGray_8
@@ -761,7 +785,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
                 auto& ctInfo = info.fColorTypeInfos[ctIdx++];
                 ctInfo.fColorType = ct;
                 ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag;
-                ctInfo.fTextureSwizzle = GrSwizzle("rrr1");
+                ctInfo.fReadSwizzle = GrSwizzle("rrr1");
             }
         }
     }
@@ -770,6 +794,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_B8G8R8A8_UNORM;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 4;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 1;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -788,6 +813,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_R5G6B5_UNORM_PACK16;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 2;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 1;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -806,6 +832,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_R16G16B16A16_SFLOAT;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 8;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 2;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -831,6 +858,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_R16_SFLOAT;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 2;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 1;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -841,7 +869,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
                 auto& ctInfo = info.fColorTypeInfos[ctIdx++];
                 ctInfo.fColorType = ct;
                 ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag | ColorTypeInfo::kRenderable_Flag;
-                ctInfo.fTextureSwizzle = GrSwizzle::RRRR();
+                ctInfo.fReadSwizzle = GrSwizzle::RRRR();
                 ctInfo.fOutputSwizzle = GrSwizzle::AAAA();
             }
         }
@@ -851,6 +879,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_R8G8B8_UNORM;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 3;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 1;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -869,6 +898,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_R8G8_UNORM;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 2;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 1;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -887,6 +917,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 4;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 1;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -905,6 +936,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_B4G4R4A4_UNORM_PACK16;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 2;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 1;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -915,7 +947,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
                 auto& ctInfo = info.fColorTypeInfos[ctIdx++];
                 ctInfo.fColorType = ct;
                 ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag | ColorTypeInfo::kRenderable_Flag;
-                ctInfo.fTextureSwizzle = GrSwizzle::BGRA();
+                ctInfo.fReadSwizzle = GrSwizzle::BGRA();
                 ctInfo.fOutputSwizzle = GrSwizzle::BGRA();
             }
         }
@@ -925,6 +957,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_R4G4B4A4_UNORM_PACK16;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 2;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 1;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -938,31 +971,12 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
             }
         }
     }
-    // Format: VK_FORMAT_R32G32B32A32_SFLOAT
-    {
-        constexpr VkFormat format = VK_FORMAT_R32G32B32A32_SFLOAT;
-        auto& info = this->getFormatInfo(format);
-        info.init(interface, physDev, properties, format);
-        if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
-            info.fColorTypeInfoCount = 1;
-            info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
-            int ctIdx = 0;
-            // Format: VK_FORMAT_R32G32B32A32_SFLOAT, Surface: kRGBA_F32
-            {
-                constexpr GrColorType ct = GrColorType::kRGBA_F32;
-                auto& ctInfo = info.fColorTypeInfos[ctIdx++];
-                ctInfo.fColorType = ct;
-                ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag | ColorTypeInfo::kRenderable_Flag;
-            }
-        }
-    }
     // Format: VK_FORMAT_R8G8B8A8_SRGB
     {
         constexpr VkFormat format = VK_FORMAT_R8G8B8A8_SRGB;
         auto& info = this->getFormatInfo(format);
-        if (fSRGBSupport) {
-            info.init(interface, physDev, properties, format);
-        }
+        info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 4;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 1;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -981,16 +995,19 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_R16_UNORM;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 2;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 1;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
             int ctIdx = 0;
-            // Format: VK_FORMAT_R16_UNORM, Surface: kR_16
+            // Format: VK_FORMAT_R16_UNORM, Surface: kAlpha_16
             {
-                constexpr GrColorType ct = GrColorType::kR_16;
+                constexpr GrColorType ct = GrColorType::kAlpha_16;
                 auto& ctInfo = info.fColorTypeInfos[ctIdx++];
                 ctInfo.fColorType = ct;
                 ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag | ColorTypeInfo::kRenderable_Flag;
+                ctInfo.fReadSwizzle = GrSwizzle::RRRR();
+                ctInfo.fOutputSwizzle = GrSwizzle::AAAA();
             }
         }
     }
@@ -999,6 +1016,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_R16G16_UNORM;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 4;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 1;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -1017,6 +1035,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_R16G16B16A16_UNORM;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 8;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 1;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -1035,6 +1054,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_R16G16_SFLOAT;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 4;
         if (SkToBool(info.fOptimalFlags & FormatInfo::kTexturable_Flag)) {
             info.fColorTypeInfoCount = 1;
             info.fColorTypeInfos.reset(new ColorTypeInfo[info.fColorTypeInfoCount]());
@@ -1052,6 +1072,10 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
     {
         constexpr VkFormat format = VK_FORMAT_G8_B8_R8_3PLANE_420_UNORM;
         auto& info = this->getFormatInfo(format);
+        // Currently we are just over estimating this value to be used in gpu size calculations even
+        // though the actually size is probably less. We should instead treat planar formats similar
+        // to compressed textures that go through their own special query for calculating size.
+        info.fBytesPerPixel = 3;
         if (fSupportsYcbcrConversion) {
             info.init(interface, physDev, properties, format);
         }
@@ -1072,6 +1096,10 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
     {
         constexpr VkFormat format = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
         auto& info = this->getFormatInfo(format);
+        // Currently we are just over estimating this value to be used in gpu size calculations even
+        // though the actually size is probably less. We should instead treat planar formats similar
+        // to compressed textures that go through their own special query for calculating size.
+        info.fBytesPerPixel = 3;
         if (fSupportsYcbcrConversion) {
             info.init(interface, physDev, properties, format);
         }
@@ -1093,6 +1121,16 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 0;
+        // No supported GrColorTypes.
+    }
+
+    // Format: VK_FORMAT_BC1_RGB_UNORM_BLOCK
+    {
+        constexpr VkFormat format = VK_FORMAT_BC1_RGB_UNORM_BLOCK;
+        auto& info = this->getFormatInfo(format);
+        info.init(interface, physDev, properties, format);
+        info.fBytesPerPixel = 0;
         // No supported GrColorTypes.
     }
 
@@ -1116,8 +1154,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
     this->setColorType(GrColorType::kAlpha_F16,        { VK_FORMAT_R16_SFLOAT });
     this->setColorType(GrColorType::kRGBA_F16,         { VK_FORMAT_R16G16B16A16_SFLOAT });
     this->setColorType(GrColorType::kRGBA_F16_Clamped, { VK_FORMAT_R16G16B16A16_SFLOAT });
-    this->setColorType(GrColorType::kRGBA_F32,         { VK_FORMAT_R32G32B32A32_SFLOAT });
-    this->setColorType(GrColorType::kR_16,             { VK_FORMAT_R16_UNORM });
+    this->setColorType(GrColorType::kAlpha_16,         { VK_FORMAT_R16_UNORM });
     this->setColorType(GrColorType::kRG_1616,          { VK_FORMAT_R16G16_UNORM });
     this->setColorType(GrColorType::kRGBA_16161616,    { VK_FORMAT_R16G16B16A16_UNORM });
     this->setColorType(GrColorType::kRG_F16,           { VK_FORMAT_R16G16_SFLOAT });
@@ -1183,12 +1220,8 @@ void GrVkCaps::FormatInfo::initSampleCounts(const GrVkInterface* interface,
     if (flags & VK_SAMPLE_COUNT_16_BIT) {
         fColorSampleCounts.push_back(16);
     }
-    if (flags & VK_SAMPLE_COUNT_32_BIT) {
-        fColorSampleCounts.push_back(32);
-    }
-    if (flags & VK_SAMPLE_COUNT_64_BIT) {
-        fColorSampleCounts.push_back(64);
-    }
+    // Standard sample locations are not defined for more than 16 samples, and we don't need more
+    // than 16. Omit 32 and 64.
 }
 
 void GrVkCaps::FormatInfo::init(const GrVkInterface* interface,
@@ -1205,24 +1238,50 @@ void GrVkCaps::FormatInfo::init(const GrVkInterface* interface,
     }
 }
 
+// For many checks in caps, we need to know whether the GrBackendFormat is external or not. If it is
+// external the VkFormat will be VK_NULL_HANDLE which is not handled by our various format
+// capability checks.
+static bool backend_format_is_external(const GrBackendFormat& format) {
+    const GrVkYcbcrConversionInfo* ycbcrInfo = format.getVkYcbcrConversionInfo();
+    SkASSERT(ycbcrInfo);
+
+    // All external formats have a valid ycbcrInfo used for sampling and a non zero external format.
+    if (ycbcrInfo->isValid() && ycbcrInfo->fExternalFormat != 0) {
+#ifdef SK_DEBUG
+        VkFormat vkFormat;
+        SkAssertResult(format.asVkFormat(&vkFormat));
+        SkASSERT(vkFormat == VK_NULL_HANDLE);
+#endif
+        return true;
+    }
+    return false;
+}
+
 bool GrVkCaps::isFormatSRGB(const GrBackendFormat& format) const {
     VkFormat vkFormat;
     if (!format.asVkFormat(&vkFormat)) {
+        return false;
+    }
+    if (backend_format_is_external(format)) {
         return false;
     }
 
     return format_is_srgb(vkFormat);
 }
 
-bool GrVkCaps::isFormatCompressed(const GrBackendFormat& format) const {
+SkImage::CompressionType GrVkCaps::compressionType(const GrBackendFormat& format) const {
     VkFormat vkFormat;
     if (!format.asVkFormat(&vkFormat)) {
-        return false;
+        return SkImage::CompressionType::kNone;
     }
 
-    SkASSERT(GrVkFormatIsSupported(vkFormat));
+    switch (vkFormat) {
+        case VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK: return SkImage::CompressionType::kETC1;
+        case VK_FORMAT_BC1_RGB_UNORM_BLOCK:     return SkImage::CompressionType::kBC1_RGB8_UNORM;
+        default:                                return SkImage::CompressionType::kNone;
+    }
 
-    return vkFormat == VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK;
+    SkUNREACHABLE;
 }
 
 bool GrVkCaps::isFormatTexturableAndUploadable(GrColorType ct,
@@ -1241,6 +1300,11 @@ bool GrVkCaps::isFormatTexturable(const GrBackendFormat& format) const {
     VkFormat vkFormat;
     if (!format.asVkFormat(&vkFormat)) {
         return false;
+    }
+    if (backend_format_is_external(format)) {
+        // We can always texture from an external format (assuming we have the ycbcr conversion
+        // info which we require to be passed in).
+        return true;
     }
     return this->isVkFormatTexturable(vkFormat);
 }
@@ -1330,6 +1394,18 @@ int GrVkCaps::maxRenderTargetSampleCount(VkFormat format) const {
     return table[table.count() - 1];
 }
 
+size_t GrVkCaps::bytesPerPixel(const GrBackendFormat& format) const {
+    VkFormat vkFormat;
+    if (!format.asVkFormat(&vkFormat)) {
+        return 0;
+    }
+    return this->bytesPerPixel(vkFormat);
+}
+
+size_t GrVkCaps::bytesPerPixel(VkFormat format) const {
+    return this->getFormatInfo(format).fBytesPerPixel;
+}
+
 static inline size_t align_to_4(size_t v) {
     switch (v & 0b11) {
         // v is already a multiple of 4.
@@ -1349,13 +1425,14 @@ GrCaps::SupportedWrite GrVkCaps::supportedWritePixelsColorType(GrColorType surfa
         return {GrColorType::kUnknown, 0};
     }
 
-
-    if (GrVkFormatNeedsYcbcrSampler(vkFormat)) {
+    // We don't support the ability to upload to external formats or formats that require a ycbcr
+    // sampler. In general these types of formats are only used for sampling in a shader.
+    if (backend_format_is_external(surfaceFormat) || GrVkFormatNeedsYcbcrSampler(vkFormat)) {
         return {GrColorType::kUnknown, 0};
     }
 
     // The VkBufferImageCopy bufferOffset field must be both a multiple of 4 and of a single texel.
-    size_t offsetAlignment = align_to_4(GrVkBytesPerFormat(vkFormat));
+    size_t offsetAlignment = align_to_4(this->bytesPerPixel(vkFormat));
 
     const auto& info = this->getFormatInfo(vkFormat);
     for (int i = 0; i < info.fColorTypeInfoCount; ++i) {
@@ -1378,8 +1455,7 @@ GrCaps::SurfaceReadPixelsSupport GrVkCaps::surfaceSupportsReadPixels(
             return SurfaceReadPixelsSupport::kCopyToTexture2D;
         }
         // We can't directly read from a compressed format
-        SkImage::CompressionType compressionType;
-        if (GrVkFormatToCompressionType(tex->imageFormat(), &compressionType)) {
+        if (GrVkFormatIsCompressed(tex->imageFormat())) {
             return SurfaceReadPixelsSupport::kCopyToTexture2D;
         }
     }
@@ -1411,7 +1487,7 @@ bool GrVkCaps::onAreColorTypeAndFormatCompatible(GrColorType ct,
 
     if (ycbcrInfo->isValid() && !GrVkFormatNeedsYcbcrSampler(vkFormat)) {
         // Format may be undefined for external images, which are required to have YCbCr conversion.
-        if (VK_FORMAT_UNDEFINED == vkFormat) {
+        if (VK_FORMAT_UNDEFINED == vkFormat && ycbcrInfo->fExternalFormat != 0) {
             return true;
         }
         return false;
@@ -1483,6 +1559,8 @@ static GrPixelConfig validate_image_info(VkFormat format, GrColorType ct, bool h
                 return kRGB_888X_GrPixelConfig;
             } else if (VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK == format) {
                 return kRGB_ETC1_GrPixelConfig;
+            } else if (VK_FORMAT_BC1_RGB_UNORM_BLOCK == format) {
+                return kRGB_BC1_GrPixelConfig;
             }
             break;
         case GrColorType::kRG_88:
@@ -1520,14 +1598,9 @@ static GrPixelConfig validate_image_info(VkFormat format, GrColorType ct, bool h
                 return kRGBA_half_Clamped_GrPixelConfig;
             }
             break;
-        case GrColorType::kRGBA_F32:
-            if (VK_FORMAT_R32G32B32A32_SFLOAT == format) {
-                return kRGBA_float_GrPixelConfig;
-            }
-            break;
-        case GrColorType::kR_16:
+        case GrColorType::kAlpha_16:
             if (VK_FORMAT_R16_UNORM == format) {
-                return kR_16_GrPixelConfig;
+                return kAlpha_16_GrPixelConfig;
             }
             break;
         case GrColorType::kRG_1616:
@@ -1546,9 +1619,15 @@ static GrPixelConfig validate_image_info(VkFormat format, GrColorType ct, bool h
             }
             break;
         // These have no equivalent:
+        case GrColorType::kRGBA_F32:
         case GrColorType::kAlpha_8xxx:
         case GrColorType::kAlpha_F32xxx:
         case GrColorType::kGray_8xxx:
+        case GrColorType::kRGB_888:
+        case GrColorType::kR_8:
+        case GrColorType::kR_16:
+        case GrColorType::kR_F16:
+        case GrColorType::kGray_F16:
             break;
     }
 
@@ -1566,6 +1645,20 @@ GrPixelConfig GrVkCaps::onGetConfigFromBackendFormat(const GrBackendFormat& form
     return validate_image_info(vkFormat, ct, ycbcrInfo->isValid());
 }
 
+GrPixelConfig GrVkCaps::onGetConfigFromCompressedBackendFormat(const GrBackendFormat& f) const {
+    VkFormat vkFormat;
+    if (!f.asVkFormat(&vkFormat)) {
+        return kUnknown_GrPixelConfig;
+    }
+
+    if (vkFormat == VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK) {
+         return kRGB_ETC1_GrPixelConfig;
+    } else if (vkFormat == VK_FORMAT_BC1_RGB_UNORM_BLOCK) {
+        return kRGB_BC1_GrPixelConfig;
+    }
+    return kUnknown_GrPixelConfig;
+}
+
 GrColorType GrVkCaps::getYUVAColorTypeFromBackendFormat(const GrBackendFormat& format,
                                                         bool isAlphaChannel) const {
     VkFormat vkFormat;
@@ -1581,9 +1674,9 @@ GrColorType GrVkCaps::getYUVAColorTypeFromBackendFormat(const GrBackendFormat& f
         case VK_FORMAT_R8G8_UNORM:               return GrColorType::kRG_88;
         case VK_FORMAT_B8G8R8A8_UNORM:           return GrColorType::kBGRA_8888;
         case VK_FORMAT_A2B10G10R10_UNORM_PACK32: return GrColorType::kRGBA_1010102;
-        case VK_FORMAT_R16_UNORM:                return GrColorType::kR_16;
+        case VK_FORMAT_R16_UNORM:                return GrColorType::kAlpha_16;
+        case VK_FORMAT_R16_SFLOAT:               return GrColorType::kAlpha_F16;
         case VK_FORMAT_R16G16_UNORM:             return GrColorType::kRG_1616;
-        // Experimental (for Y416 and mutant P016/P010)
         case VK_FORMAT_R16G16B16A16_UNORM:       return GrColorType::kRGBA_16161616;
         case VK_FORMAT_R16G16_SFLOAT:            return GrColorType::kRG_F16;
         default:                                 return GrColorType::kUnknown;
@@ -1604,22 +1697,31 @@ GrBackendFormat GrVkCaps::onGetDefaultBackendFormat(GrColorType ct,
 GrBackendFormat GrVkCaps::getBackendFormatFromCompressionType(
         SkImage::CompressionType compressionType) const {
     switch (compressionType) {
-        case SkImage::kETC1_CompressionType:
-            return GrBackendFormat::MakeVk(VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK);
+        case SkImage::CompressionType::kNone:
+            return {};
+        case SkImage::CompressionType::kETC1:
+            if (this->isVkFormatTexturable(VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK)) {
+                return GrBackendFormat::MakeVk(VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK);
+            }
+            return {};
+        case SkImage::CompressionType::kBC1_RGB8_UNORM:
+            if (this->isVkFormatTexturable(VK_FORMAT_BC1_RGB_UNORM_BLOCK)) {
+                return GrBackendFormat::MakeVk(VK_FORMAT_BC1_RGB_UNORM_BLOCK);
+            }
+            return {};
     }
-    SK_ABORT("Invalid compression type");
+
+    SkUNREACHABLE;
 }
 
-bool GrVkCaps::canClearTextureOnCreation() const { return true; }
-
-GrSwizzle GrVkCaps::getTextureSwizzle(const GrBackendFormat& format, GrColorType colorType) const {
+GrSwizzle GrVkCaps::getReadSwizzle(const GrBackendFormat& format, GrColorType colorType) const {
     VkFormat vkFormat;
     SkAssertResult(format.asVkFormat(&vkFormat));
     const auto& info = this->getFormatInfo(vkFormat);
     for (int i = 0; i < info.fColorTypeInfoCount; ++i) {
         const auto& ctInfo = info.fColorTypeInfos[i];
         if (ctInfo.fColorType == colorType) {
-            return ctInfo.fTextureSwizzle;
+            return ctInfo.fReadSwizzle;
         }
     }
     return GrSwizzle::RGBA();
@@ -1651,7 +1753,7 @@ GrCaps::SupportedRead GrVkCaps::onSupportedReadPixelsColorType(
     }
 
     // The VkBufferImageCopy bufferOffset field must be both a multiple of 4 and of a single texel.
-    size_t offsetAlignment = align_to_4(GrVkBytesPerFormat(vkFormat));
+    size_t offsetAlignment = align_to_4(this->bytesPerPixel(vkFormat));
 
     const auto& info = this->getFormatInfo(vkFormat);
     for (int i = 0; i < info.fColorTypeInfoCount; ++i) {
@@ -1671,6 +1773,76 @@ int GrVkCaps::getFragmentUniformSet() const {
     return GrVkUniformHandler::kUniformBufferDescSet;
 }
 
+void GrVkCaps::addExtraSamplerKey(GrProcessorKeyBuilder* b,
+                                  const GrSamplerState& samplerState,
+                                  const GrBackendFormat& format) const {
+    const GrVkYcbcrConversionInfo* ycbcrInfo = format.getVkYcbcrConversionInfo();
+    if (!ycbcrInfo) {
+        return;
+    }
+
+    GrVkSampler::Key key = GrVkSampler::GenerateKey(samplerState, *ycbcrInfo);
+
+    size_t numInts = (sizeof(key) + 3) / 4;
+
+    uint32_t* tmp = b->add32n(numInts);
+
+    tmp[numInts - 1] = 0;
+    memcpy(tmp, &key, sizeof(key));
+}
+
+/**
+ * For Vulkan we want to cache the entire VkPipeline for reuse of draws. The Desc here holds all
+ * the information needed to differentiate one pipeline from another.
+ *
+ * The GrProgramDesc contains all the information need to create the actual shaders for the
+ * pipeline.
+ *
+ * For Vulkan we need to add to the GrProgramDesc to include the rest of the state on the
+ * pipline. This includes stencil settings, blending information, render pass format, draw face
+ * information, and primitive type. Note that some state is set dynamically on the pipeline for
+ * each draw  and thus is not included in this descriptor. This includes the viewport, scissor,
+ * and blend constant.
+ */
+GrProgramDesc GrVkCaps::makeDesc(const GrRenderTarget* rt, const GrProgramInfo& programInfo) const {
+    GrProgramDesc desc;
+    if (!GrProgramDesc::Build(&desc, rt, programInfo, *this)) {
+        SkASSERT(!desc.isValid());
+        return desc;
+    }
+
+    GrProcessorKeyBuilder b(&desc.key());
+
+    // This will become part of the sheared off key used to persistently cache
+    // the SPIRV code. It needs to be added right after the base key so that,
+    // when the base-key is sheared off, the shearing code can include it in the
+    // reduced key (c.f. the +4s in the SkData::MakeWithCopy calls in
+    // GrVkPipelineStateBuilder.cpp).
+    b.add32(GrVkGpu::kShader_PersistentCacheKeyType);
+
+    GrVkRenderTarget* vkRT = (GrVkRenderTarget*) rt;
+    // TODO: support failure in getSimpleRenderPass
+    SkASSERT(vkRT->getSimpleRenderPass());
+    vkRT->getSimpleRenderPass()->genKey(&b);
+
+    GrStencilSettings stencil = programInfo.nonGLStencilSettings();
+    stencil.genKey(&b);
+
+    programInfo.pipeline().genKey(&b, *this);
+    b.add32(programInfo.numRasterSamples());
+
+    // Vulkan requires the full primitive type as part of its key
+    b.add32(programInfo.primitiveTypeKey());
+
+    if (this->mixedSamplesSupport()) {
+        // Add "0" to indicate that coverage modulation will not be enabled, or the (non-zero)
+        // raster sample count if it will.
+        b.add32(!programInfo.isMixedSampled() ? 0 : programInfo.numRasterSamples());
+    }
+
+    return desc;
+}
+
 #if GR_TEST_UTILS
 std::vector<GrCaps::TestFormatColorTypeCombination> GrVkCaps::getTestingCombinations() const {
     std::vector<GrCaps::TestFormatColorTypeCombination> combos = {
@@ -1682,7 +1854,6 @@ std::vector<GrCaps::TestFormatColorTypeCombination> GrVkCaps::getTestingCombinat
         { GrColorType::kRGBA_8888_SRGB,   GrBackendFormat::MakeVk(VK_FORMAT_R8G8B8A8_SRGB)        },
         { GrColorType::kRGB_888x,         GrBackendFormat::MakeVk(VK_FORMAT_R8G8B8A8_UNORM)       },
         { GrColorType::kRGB_888x,         GrBackendFormat::MakeVk(VK_FORMAT_R8G8B8_UNORM)         },
-        { GrColorType::kRGB_888x,         GrBackendFormat::MakeVk(VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK)},
         { GrColorType::kRG_88,            GrBackendFormat::MakeVk(VK_FORMAT_R8G8_UNORM)           },
         { GrColorType::kBGRA_8888,        GrBackendFormat::MakeVk(VK_FORMAT_B8G8R8A8_UNORM)       },
         { GrColorType::kRGBA_1010102,     GrBackendFormat::MakeVk(VK_FORMAT_A2B10G10R10_UNORM_PACK32)},
@@ -1690,11 +1861,13 @@ std::vector<GrCaps::TestFormatColorTypeCombination> GrVkCaps::getTestingCombinat
         { GrColorType::kAlpha_F16,        GrBackendFormat::MakeVk(VK_FORMAT_R16_SFLOAT)           },
         { GrColorType::kRGBA_F16,         GrBackendFormat::MakeVk(VK_FORMAT_R16G16B16A16_SFLOAT)  },
         { GrColorType::kRGBA_F16_Clamped, GrBackendFormat::MakeVk(VK_FORMAT_R16G16B16A16_SFLOAT)  },
-        { GrColorType::kRGBA_F32,         GrBackendFormat::MakeVk(VK_FORMAT_R32G32B32A32_SFLOAT)  },
-        { GrColorType::kR_16,             GrBackendFormat::MakeVk(VK_FORMAT_R16_UNORM)            },
+        { GrColorType::kAlpha_16,         GrBackendFormat::MakeVk(VK_FORMAT_R16_UNORM)            },
         { GrColorType::kRG_1616,          GrBackendFormat::MakeVk(VK_FORMAT_R16G16_UNORM)         },
         { GrColorType::kRGBA_16161616,    GrBackendFormat::MakeVk(VK_FORMAT_R16G16B16A16_UNORM)   },
         { GrColorType::kRG_F16,           GrBackendFormat::MakeVk(VK_FORMAT_R16G16_SFLOAT)        },
+        // These two compressed formats both have an effective colorType of kRGB_888x
+        { GrColorType::kRGB_888x,       GrBackendFormat::MakeVk(VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK)},
+        { GrColorType::kRGB_888x,         GrBackendFormat::MakeVk(VK_FORMAT_BC1_RGB_UNORM_BLOCK)  },
     };
 
     return combos;

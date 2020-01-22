@@ -200,9 +200,6 @@ struct SK_API GrContextOptions {
      */
     ShaderCacheStrategy fShaderCacheStrategy = ShaderCacheStrategy::kBackendBinary;
 
-    // Legacy flag until clients are updated to use fShaderCacheStrategy
-    bool fDisallowGLSLBinaryCaching = false;
-
     /**
      * If present, use this object to report shader compilation failures. If not, report failures
      * via SkDebugf and assert.
@@ -251,7 +248,7 @@ struct SK_API GrContextOptions {
     /**
      * Include or exclude specific GPU path renderers.
      */
-    GpuPathRenderers fGpuPathRenderers = GpuPathRenderers::kAll;
+    GpuPathRenderers fGpuPathRenderers = GpuPathRenderers::kDefault;
 #endif
 
 #if SK_SUPPORT_ATLAS_TEXT

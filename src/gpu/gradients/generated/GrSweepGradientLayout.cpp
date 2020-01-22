@@ -39,17 +39,9 @@ public:
                 "atan(-%s.y, length(%s) - %s.x));\n} else {\n    angle = half(atan(-%s.y, "
                 "-%s.x));\n}\nhalf t = ((angle * 0.15915493667125702 + 0.5) + %s) * %s;\n%s = "
                 "half4(t, 1.0, 0.0, 0.0);\n",
-                _outer.computeLocalCoordsInVertexShader() ? sk_TransformedCoords2D_0.c_str()
-                                                          : "_coords",
-                _outer.computeLocalCoordsInVertexShader() ? sk_TransformedCoords2D_0.c_str()
-                                                          : "_coords",
-                _outer.computeLocalCoordsInVertexShader() ? sk_TransformedCoords2D_0.c_str()
-                                                          : "_coords",
-                _outer.computeLocalCoordsInVertexShader() ? sk_TransformedCoords2D_0.c_str()
-                                                          : "_coords",
-                _outer.computeLocalCoordsInVertexShader() ? sk_TransformedCoords2D_0.c_str()
-                                                          : "_coords",
-                args.fUniformHandler->getUniformCStr(biasVar),
+                sk_TransformedCoords2D_0.c_str(), sk_TransformedCoords2D_0.c_str(),
+                sk_TransformedCoords2D_0.c_str(), sk_TransformedCoords2D_0.c_str(),
+                sk_TransformedCoords2D_0.c_str(), args.fUniformHandler->getUniformCStr(biasVar),
                 args.fUniformHandler->getUniformCStr(scaleVar), args.fOutputColor);
     }
 
@@ -115,7 +107,7 @@ std::unique_ptr<GrFragmentProcessor> GrSweepGradientLayout::TestCreate(GrProcess
                                                         params.fStops, params.fColorCount);
     GrTest::TestAsFPArgs asFPArgs(d);
     std::unique_ptr<GrFragmentProcessor> fp = as_SB(shader)->asFragmentProcessor(asFPArgs.args());
-    GrAlwaysAssert(fp);
+    SkASSERT_RELEASE(fp);
     return fp;
 }
 #endif

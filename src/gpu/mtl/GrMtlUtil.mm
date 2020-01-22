@@ -79,9 +79,6 @@ bool GrPixelConfigToMTLFormat(GrPixelConfig config, MTLPixelFormat* format) {
             return true;
         case kGray_8_as_Lum_GrPixelConfig:
             return false;
-        case kRGBA_float_GrPixelConfig:
-            *format = MTLPixelFormatRGBA32Float;
-            return true;
         case kRGBA_half_GrPixelConfig:
             *format = MTLPixelFormatRGBA16Float;
             return true;
@@ -101,14 +98,15 @@ bool GrPixelConfigToMTLFormat(GrPixelConfig config, MTLPixelFormat* format) {
 #else
             return false;
 #endif
-        case kR_16_GrPixelConfig:
+        case kRGB_BC1_GrPixelConfig:
+            // Even Mac desktops only support the RGBA variants
+            return false;
+        case kAlpha_16_GrPixelConfig:
             *format = MTLPixelFormatR16Unorm;
             return true;
         case kRG_1616_GrPixelConfig:
             *format = MTLPixelFormatRG16Unorm;
             return true;
-
-        // Experimental (for Y416 and mutant P016/P010)
         case kRGBA_16161616_GrPixelConfig:
             *format = MTLPixelFormatRGBA16Unorm;
             return true;
@@ -129,7 +127,9 @@ MTLTextureDescriptor* GrGetMTLTextureDescriptor(id<MTLTexture> mtlTexture) {
     texDesc.mipmapLevelCount = mtlTexture.mipmapLevelCount;
     texDesc.arrayLength = mtlTexture.arrayLength;
     texDesc.sampleCount = mtlTexture.sampleCount;
-    texDesc.usage = mtlTexture.usage;
+    if (@available(macOS 10.11, iOS 9.0, *)) {
+        texDesc.usage = mtlTexture.usage;
+    }
     return texDesc;
 }
 
@@ -145,14 +145,15 @@ void print_msl(const char* source) {
 }
 #endif
 
-id<MTLLibrary> GrCompileMtlShaderLibrary(const GrMtlGpu* gpu,
-                                         const char* shaderString,
-                                         SkSL::Program::Kind kind,
-                                         const SkSL::Program::Settings& settings,
-                                         SkSL::Program::Inputs* outInputs) {
+id<MTLLibrary> GrGenerateMtlShaderLibrary(const GrMtlGpu* gpu,
+                                          const SkSL::String& shaderString,
+                                          SkSL::Program::Kind kind,
+                                          const SkSL::Program::Settings& settings,
+                                          SkSL::String* mslShader,
+                                          SkSL::Program::Inputs* outInputs) {
     std::unique_ptr<SkSL::Program> program =
             gpu->shaderCompiler()->convertProgram(kind,
-                                                  SkSL::String(shaderString),
+                                                  shaderString,
                                                   settings);
 
     if (!program) {
@@ -162,13 +163,18 @@ id<MTLLibrary> GrCompileMtlShaderLibrary(const GrMtlGpu* gpu,
     }
 
     *outInputs = program->fInputs;
-    SkSL::String code;
-    if (!gpu->shaderCompiler()->toMetal(*program, &code)) {
+    if (!gpu->shaderCompiler()->toMetal(*program, mslShader)) {
         SkDebugf("%s\n", gpu->shaderCompiler()->errorText().c_str());
         SkASSERT(false);
         return nil;
     }
-    NSString* mtlCode = [[NSString alloc] initWithCString: code.c_str()
+
+    return GrCompileMtlShaderLibrary(gpu, *mslShader);
+}
+
+id<MTLLibrary> GrCompileMtlShaderLibrary(const GrMtlGpu* gpu,
+                                         const SkSL::String& shaderString) {
+    NSString* mtlCode = [[NSString alloc] initWithCString: shaderString.c_str()
                                                  encoding: NSASCIIStringEncoding];
 #if PRINT_MSL
     print_msl([mtlCode cStringUsingEncoding: NSASCIIStringEncoding]);
@@ -191,7 +197,7 @@ id<MTLLibrary> GrCompileMtlShaderLibrary(const GrMtlGpu* gpu,
                                                                    error: &error];
     if (error) {
         SkDebugf("Error compiling MSL shader: %s\n%s\n",
-                 code.c_str(),
+                 shaderString.c_str(),
                  [[error localizedDescription] cStringUsingEncoding: NSASCIIStringEncoding]);
         return nil;
     }
@@ -289,48 +295,33 @@ GrMTLPixelFormat GrGetMTLPixelFormatFromMtlTextureInfo(const GrMtlTextureInfo& i
     return static_cast<GrMTLPixelFormat>(mtlTexture.pixelFormat);
 }
 
-size_t GrMtlBytesPerFormat(MTLPixelFormat format) {
-    switch (format) {
-        case MTLPixelFormatA8Unorm:
-        case MTLPixelFormatR8Unorm:
-            return 1;
-
+bool GrMtlFormatIsCompressed(MTLPixelFormat mtlFormat) {
+    switch (mtlFormat) {
 #ifdef SK_BUILD_FOR_IOS
-        case MTLPixelFormatB5G6R5Unorm:
-        case MTLPixelFormatABGR4Unorm:
-#endif
-        case MTLPixelFormatRG8Unorm:
-        case MTLPixelFormatR16Float:
-        case MTLPixelFormatR16Unorm:
-            return 2;
-
-        case MTLPixelFormatRGBA8Unorm:
-        case MTLPixelFormatBGRA8Unorm:
-        case MTLPixelFormatRGBA8Unorm_sRGB:
-        case MTLPixelFormatRGB10A2Unorm:
-        case MTLPixelFormatRG16Unorm:
-        case MTLPixelFormatRG16Float:
-            return 4;
-
-        case MTLPixelFormatRGBA16Float:
-        case MTLPixelFormatRGBA16Unorm:
-            return 8;
-
-        case MTLPixelFormatRGBA32Float:
-            return 16;
-
-#ifdef SK_BUILD_FOR_IOS
-        case  MTLPixelFormatETC2_RGB8:
-            return 0;
+        case MTLPixelFormatETC2_RGB8:
+            return true;
 #endif
         default:
-            SK_ABORT("Invalid Mtl format");
+            return false;
+    }
+}
+
+SkImage::CompressionType GrMtlFormatToCompressionType(MTLPixelFormat mtlFormat) {
+    switch (mtlFormat) {
+#ifdef SK_BUILD_FOR_IOS
+        case MTLPixelFormatETC2_RGB8: return SkImage::CompressionType::kETC1;
+#endif
+        default:                      return SkImage::CompressionType::kNone;
     }
 
-    SK_ABORT("Invalid Mtl format");
+    SkUNREACHABLE;
 }
 
 #if GR_TEST_UTILS
+bool GrMtlFormatIsBGRA(GrMTLPixelFormat mtlFormat) {
+    return mtlFormat == MTLPixelFormatBGRA8Unorm;
+}
+
 const char* GrMtlFormatToStr(GrMTLPixelFormat mtlFormat) {
     switch (mtlFormat) {
         case MTLPixelFormatInvalid:         return "Invalid";
@@ -348,7 +339,6 @@ const char* GrMtlFormatToStr(GrMTLPixelFormat mtlFormat) {
 #ifdef SK_BUILD_FOR_IOS
         case MTLPixelFormatABGR4Unorm:      return "ABGR4Unorm";
 #endif
-        case MTLPixelFormatRGBA32Float:     return "RGBA32Float";
         case MTLPixelFormatRGBA8Unorm_sRGB: return "RGBA8Unorm_sRGB";
         case MTLPixelFormatR16Unorm:        return "R16Unorm";
         case MTLPixelFormatRG16Unorm:       return "RG16Unorm";

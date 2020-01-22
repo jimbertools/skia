@@ -21,7 +21,11 @@ class GrBackendFormat;
 class GrBackendRenderTarget;
 class GrBackendTexture;
 struct GrContextOptions;
+class GrProcessorKeyBuilder;
+class GrProgramDesc;
+class GrProgramInfo;
 class GrRenderTargetProxy;
+class GrSamplerState;
 class GrSurface;
 class SkJSONWriter;
 
@@ -35,21 +39,13 @@ public:
     void dumpJSON(SkJSONWriter*) const;
 
     const GrShaderCaps* shaderCaps() const { return fShaderCaps.get(); }
+    sk_sp<const GrShaderCaps> refShaderCaps() const { return fShaderCaps; }
 
     bool npotTextureTileSupport() const { return fNPOTTextureTileSupport; }
     /** To avoid as-yet-unnecessary complexity we don't allow any partial support of MIP Maps (e.g.
         only for POT textures) */
     bool mipMapSupport() const { return fMipMapSupport; }
 
-    /**
-     * Skia convention is that a device only has sRGB support if it supports sRGB formats for both
-     * textures and framebuffers.
-     */
-    bool srgbSupport() const { return fSRGBSupport; }
-    /**
-     * Is there support for enabling/disabling sRGB writes for sRGB-capable color buffers?
-     */
-    bool srgbWriteControl() const { return fSRGBWriteControl; }
     bool gpuTracingSupport() const { return fGpuTracingSupport; }
     bool oversizedStencilSupport() const { return fOversizedStencilSupport; }
     bool textureBarrierSupport() const { return fTextureBarrierSupport; }
@@ -57,6 +53,8 @@ public:
     bool multisampleDisableSupport() const { return fMultisampleDisableSupport; }
     bool instanceAttribSupport() const { return fInstanceAttribSupport; }
     bool mixedSamplesSupport() const { return fMixedSamplesSupport; }
+    bool conservativeRasterSupport() const { return fConservativeRasterSupport; }
+    bool wireframeSupport() const { return fWireframeSupport; }
     // This flag indicates that we never have to resolve MSAA. In practice, it means that we have
     // an MSAA-render-to-texture extension: Any render target we create internally will use the
     // extension, and any wrapped render target is the client's responsibility.
@@ -73,6 +71,14 @@ public:
     // initialize each tile with a constant value rather than loading each pixel from memory.
     bool preferFullscreenClears() const { return fPreferFullscreenClears; }
 
+    // Should we discard stencil values after a render pass? (Tilers get better performance if we
+    // always load stencil buffers with a "clear" op, and then discard the content when finished.)
+    bool discardStencilValuesAfterRenderPass() const {
+        // This method is actually just a duplicate of preferFullscreenClears(), with a descriptive
+        // name for the sake of readability.
+        return this->preferFullscreenClears();
+    }
+
     bool preferVRAMUseOverFlushes() const { return fPreferVRAMUseOverFlushes; }
 
     bool preferTrianglesOverSampleMask() const { return fPreferTrianglesOverSampleMask; }
@@ -80,6 +86,11 @@ public:
     bool avoidStencilBuffers() const { return fAvoidStencilBuffers; }
 
     bool avoidWritePixelsFastPath() const { return fAvoidWritePixelsFastPath; }
+
+    // http://skbug.com/9739
+    bool requiresManualFBBarrierAfterTessellatedStencilDraw() const {
+        return fRequiresManualFBBarrierAfterTessellatedStencilDraw;
+    }
 
     /**
      * Indicates the capabilities of the fixed function blend unit.
@@ -160,7 +171,13 @@ public:
     }
 
     virtual bool isFormatSRGB(const GrBackendFormat&) const = 0;
-    virtual bool isFormatCompressed(const GrBackendFormat&) const = 0;
+
+    // This will return SkImage::CompressionType::kNone if the backend format is not compressed.
+    virtual SkImage::CompressionType compressionType(const GrBackendFormat&) const = 0;
+
+    bool isFormatCompressed(const GrBackendFormat& format) const {
+        return this->compressionType(format) != SkImage::CompressionType::kNone;
+    }
 
     // TODO: Once we use the supportWritePixels call for uploads, we can remove this function and
     // instead only have the version that takes a GrBackendFormat.
@@ -193,6 +210,10 @@ public:
     // sample count is 1 then 1 will be returned if non-MSAA rendering is supported, otherwise 0.
     // For historical reasons requestedCount==0 is handled identically to requestedCount==1.
     virtual int getRenderTargetSampleCount(int requestedCount, const GrBackendFormat&) const = 0;
+
+    // Returns the number of bytes per pixel for the given GrBackendFormat. This is only supported
+    // for "normal" formats. For compressed formats this will return 0.
+    virtual size_t bytesPerPixel(const GrBackendFormat&) const = 0;
 
     /**
      * Backends may have restrictions on what types of surfaces support GrGpu::writePixels().
@@ -289,17 +310,6 @@ public:
      */
     bool shouldInitializeTextures() const { return fShouldInitializeTextures; }
 
-    /**
-     * When this is true it is required that all textures are initially cleared. However, the
-     * clearing must be implemented by passing level data to GrGpu::createTexture() rather than
-     * be implemeted by GrGpu::createTexture().
-     *
-     * TODO: Make this take GrBacknedFormat when canClearTextureOnCreation() does as well.
-     */
-    bool createTextureMustSpecifyAllLevels() const {
-        return this->shouldInitializeTextures() && !this->canClearTextureOnCreation();
-    }
-
     /** Returns true if the given backend supports importing AHardwareBuffers via the
      * GrAHardwarebufferImageGenerator. This will only ever be supported on Android devices with API
      * level >= 26.
@@ -333,6 +343,8 @@ public:
 
     // Many drivers have issues with color clears.
     bool performColorClearsAsDraws() const { return fPerformColorClearsAsDraws; }
+
+    bool avoidLargeIndexBufferDraws() const { return fAvoidLargeIndexBufferDraws; }
 
     /// Adreno 4xx devices experience an issue when there are a large number of stencil clip bit
     /// clears. The minimal repro steps are not precisely known but drawing a rect with a stencil
@@ -390,6 +402,9 @@ public:
 
         return this->onGetConfigFromBackendFormat(format, grCT);
     }
+    GrPixelConfig getConfigFromCompressedBackendFormat(const GrBackendFormat& format) const {
+        return this->onGetConfigFromCompressedBackendFormat(format);
+    }
 
     /**
      * Special method only for YUVA images. Returns a colortype that matches the backend format or
@@ -404,27 +419,16 @@ public:
     virtual GrBackendFormat getBackendFormatFromCompressionType(SkImage::CompressionType) const = 0;
 
     /**
-     * Used by implementation of shouldInitializeTextures(). Indicates whether GrGpu implements the
-     * clear in GrGpu::createTexture() or if false then the caller must provide cleared MIP level
-     * data or GrGpu::createTexture() will fail.
-     *
-     * TODO: Make this take a GrBackendFormat so that GL can make this faster for cases
-     * when the format is renderable and glTexClearImage is not available. Doing this
-     * is overly complicated until the GrPixelConfig/format mess is straightened out..
-     */
-    virtual bool canClearTextureOnCreation() const = 0;
-
-    /**
      * The CLAMP_TO_BORDER wrap mode for texture coordinates was added to desktop GL in 1.3, and
      * GLES 3.2, but is also available in extensions. Vulkan and Metal always have support.
      */
     bool clampToBorderSupport() const { return fClampToBorderSupport; }
 
     /**
-     * Returns the GrSwizzle to use when sampling from a texture with the passed in GrBackendFormat
-     * and GrColorType.
+     * Returns the GrSwizzle to use when sampling or reading back from a texture with the passed in
+     * GrBackendFormat and GrColorType.
      */
-    virtual GrSwizzle getTextureSwizzle(const GrBackendFormat&, GrColorType) const = 0;
+    virtual GrSwizzle getReadSwizzle(const GrBackendFormat&, GrColorType) const = 0;
 
     /**
      * Returns the GrSwizzle to use when outputting to a render target with the passed in
@@ -445,6 +449,17 @@ public:
         return result;
     }
 
+    /**
+     * Adds fields to the key to represent the sampler that will be created for the passed
+     * in parameters. Currently this extra keying is only needed when building a vulkan pipeline
+     * with immutable samplers.
+     */
+    virtual void addExtraSamplerKey(GrProcessorKeyBuilder*,
+                                    const GrSamplerState&,
+                                    const GrBackendFormat&) const {}
+
+    virtual GrProgramDesc makeDesc(const GrRenderTarget*, const GrProgramInfo&) const = 0;
+
 #ifdef SK_DEBUG
     // This is just a debugging entry point until we're weaned off of GrPixelConfig. It
     // should be used to verify that the pixel config from user-level code (the genericConfig)
@@ -462,17 +477,15 @@ public:
 #endif
 
 protected:
-    /** Subclasses must call this at the end of their constructors in order to apply caps
-        overrides requested by the client. Note that overrides will only reduce the caps never
-        expand them. */
-    void applyOptionsOverrides(const GrContextOptions& options);
+    // Subclasses must call this at the end of their init method in order to do final processing on
+    // the caps (including overrides requested by the client).
+    // NOTE: this method will only reduce the caps, never expand them.
+    void finishInitialization(const GrContextOptions& options);
 
     sk_sp<GrShaderCaps> fShaderCaps;
 
     bool fNPOTTextureTileSupport                     : 1;
     bool fMipMapSupport                              : 1;
-    bool fSRGBSupport                                : 1;
-    bool fSRGBWriteControl                           : 1;
     bool fReuseScratchTextures                       : 1;
     bool fReuseScratchBuffers                        : 1;
     bool fGpuTracingSupport                          : 1;
@@ -482,6 +495,8 @@ protected:
     bool fMultisampleDisableSupport                  : 1;
     bool fInstanceAttribSupport                      : 1;
     bool fMixedSamplesSupport                        : 1;
+    bool fConservativeRasterSupport                  : 1;
+    bool fWireframeSupport                           : 1;
     bool fMSAAResolvesAutomatically                  : 1;
     bool fUsePrimitiveRestart                        : 1;
     bool fPreferClientSideDynamicBuffers             : 1;
@@ -493,6 +508,7 @@ protected:
     bool fClampToBorderSupport                       : 1;
     bool fPerformPartialClearsAsDraws                : 1;
     bool fPerformColorClearsAsDraws                  : 1;
+    bool fAvoidLargeIndexBufferDraws                 : 1;
     bool fPerformStencilClearsAsDraws                : 1;
     bool fAllowCoverageCounting                      : 1;
     bool fTransferBufferSupport                      : 1;
@@ -504,6 +520,7 @@ protected:
     bool fDriverBlacklistMSAACCPR                    : 1;
     bool fAvoidStencilBuffers                        : 1;
     bool fAvoidWritePixelsFastPath                   : 1;
+    bool fRequiresManualFBBarrierAfterTessellatedStencilDraw : 1;
 
     // ANGLE performance workaround
     bool fPreferVRAMUseOverFlushes                   : 1;
@@ -522,7 +539,7 @@ protected:
 
     BlendEquationSupport fBlendEquationSupport;
     uint32_t fAdvBlendEqBlacklist;
-    GR_STATIC_ASSERT(kLast_GrBlendEquation < 32);
+    static_assert(kLast_GrBlendEquation < 32);
 
     uint32_t fMapBufferFlags;
     int fBufferMapThreshold;
@@ -538,6 +555,8 @@ protected:
     GrDriverBugWorkarounds fDriverBugWorkarounds;
 
 private:
+    void applyOptionsOverrides(const GrContextOptions& options);
+
     virtual void onApplyOptionsOverrides(const GrContextOptions&) {}
     virtual void onDumpJSON(SkJSONWriter*) const {}
     virtual bool onSurfaceSupportsWritePixels(const GrSurface*) const = 0;
@@ -553,6 +572,7 @@ private:
 
     virtual GrPixelConfig onGetConfigFromBackendFormat(const GrBackendFormat& format,
                                                        GrColorType ct) const = 0;
+    virtual GrPixelConfig onGetConfigFromCompressedBackendFormat(const GrBackendFormat&) const = 0;
 
     virtual bool onAreColorTypeAndFormatCompatible(GrColorType, const GrBackendFormat&) const = 0;
 

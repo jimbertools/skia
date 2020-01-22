@@ -17,6 +17,7 @@
 
 class SkBitmap;
 struct SkDrawShadowRec;
+class SkCanvasMatrix;
 class SkGlyphRun;
 class SkGlyphRunList;
 class SkImageFilterCache;
@@ -99,9 +100,13 @@ public:
     virtual void* getRasterHandle() const { return nullptr; }
 
     void save() { this->onSave(); }
-    void restore(const SkMatrix& ctm) {
+    void restore(const SkCanvasMatrix& ctm) {
         this->onRestore();
         this->setGlobalCTM(ctm);
+    }
+    void restoreLocal(const SkMatrix& localToDevice) {
+        this->onRestore();
+        this->setLocalToDevice(localToDevice);
     }
     void clipRect(const SkRect& rect, SkClipOp op, bool aa) {
         this->onClipRect(rect, op, aa);
@@ -118,14 +123,18 @@ public:
     void androidFramework_setDeviceClipRestriction(SkIRect* mutableClipRestriction) {
         this->onSetDeviceClipRestriction(mutableClipRestriction);
     }
-    bool clipIsWideOpen() const;
-
-    const SkMatrix& ctm() const { return fCTM; }
-    void setCTM(const SkMatrix& ctm) {
-        fCTM = ctm;
+    bool clipIsWideOpen() const {
+        return this->onClipIsWideOpen();
     }
-    void setGlobalCTM(const SkMatrix& ctm);
+
+    const SkMatrix& localToDevice() const { return fLocalToDevice; }
+    void setLocalToDevice(const SkMatrix& localToDevice) {
+        fLocalToDevice = localToDevice;
+    }
+    void setGlobalCTM(const SkCanvasMatrix& ctm);
     virtual void validateDevBounds(const SkIRect&) {}
+
+    virtual bool android_utils_clipWithStencil() { return false; }
 
 protected:
     enum TileUsage {
@@ -145,6 +154,7 @@ protected:
     virtual void onClipRegion(const SkRegion& deviceRgn, SkClipOp) {}
     virtual void onSetDeviceClipRestriction(SkIRect* mutableClipRestriction) {}
     virtual bool onClipIsAA() const = 0;
+    virtual bool onClipIsWideOpen() const = 0;
     virtual void onAsRgnClip(SkRegion*) const = 0;
     enum class ClipType {
         kEmpty,
@@ -372,7 +382,7 @@ private:
     SkIPoint             fOrigin;
     const SkImageInfo    fInfo;
     const SkSurfaceProps fSurfaceProps;
-    SkMatrix             fCTM;
+    SkMatrix             fLocalToDevice;
 
     typedef SkRefCnt INHERITED;
 };
@@ -381,9 +391,9 @@ class SkNoPixelsDevice : public SkBaseDevice {
 public:
     SkNoPixelsDevice(const SkIRect& bounds, const SkSurfaceProps& props,
                      sk_sp<SkColorSpace> colorSpace = nullptr)
-    : SkBaseDevice(SkImageInfo::Make(bounds.width(), bounds.height(), kUnknown_SkColorType,
-                                     kUnknown_SkAlphaType, std::move(colorSpace)), props)
-    {
+            : SkBaseDevice(SkImageInfo::Make(bounds.size(), kUnknown_SkColorType,
+                                             kUnknown_SkAlphaType, std::move(colorSpace)),
+                           props) {
         // this fails if we enable this assert: DiscardableImageMapTest.GetDiscardableImagesInRectMaxImage
         //SkASSERT(bounds.width() >= 0 && bounds.height() >= 0);
 
@@ -407,6 +417,7 @@ protected:
     void onClipRegion(const SkRegion& deviceRgn, SkClipOp) override {}
     void onSetDeviceClipRestriction(SkIRect* mutableClipRestriction) override {}
     bool onClipIsAA() const override { return false; }
+    bool onClipIsWideOpen() const override { return true; }
     void onAsRgnClip(SkRegion* rgn) const override {
         rgn->setRect(SkIRect::MakeWH(this->width(), this->height()));
     }
@@ -432,21 +443,21 @@ private:
     typedef SkBaseDevice INHERITED;
 };
 
-class SkAutoDeviceCTMRestore : SkNoncopyable {
+class SkAutoDeviceTransformRestore : SkNoncopyable {
 public:
-    SkAutoDeviceCTMRestore(SkBaseDevice* device, const SkMatrix& ctm)
+    SkAutoDeviceTransformRestore(SkBaseDevice* device, const SkMatrix& localToDevice)
         : fDevice(device)
-        , fPrevCTM(device->ctm())
+        , fPrevLocalToDevice(device->localToDevice())
     {
-        fDevice->setCTM(ctm);
+        fDevice->setLocalToDevice(localToDevice);
     }
-    ~SkAutoDeviceCTMRestore() {
-        fDevice->setCTM(fPrevCTM);
+    ~SkAutoDeviceTransformRestore() {
+        fDevice->setLocalToDevice(fPrevLocalToDevice);
     }
 
 private:
     SkBaseDevice*   fDevice;
-    const SkMatrix  fPrevCTM;
+    const SkMatrix  fPrevLocalToDevice;
 };
 
 #endif

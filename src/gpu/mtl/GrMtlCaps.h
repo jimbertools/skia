@@ -27,7 +27,7 @@ public:
               MTLFeatureSet featureSet);
 
     bool isFormatSRGB(const GrBackendFormat&) const override;
-    bool isFormatCompressed(const GrBackendFormat&) const override;
+    SkImage::CompressionType compressionType(const GrBackendFormat&) const override;
 
     bool isFormatTexturableAndUploadable(GrColorType, const GrBackendFormat&) const override;
     bool isFormatTexturable(const GrBackendFormat&) const override;
@@ -46,6 +46,9 @@ public:
     int maxRenderTargetSampleCount(const GrBackendFormat&) const override;
     int maxRenderTargetSampleCount(MTLPixelFormat) const;
 
+    size_t bytesPerPixel(const GrBackendFormat&) const override;
+    size_t bytesPerPixel(MTLPixelFormat) const;
+
     SupportedWrite supportedWritePixelsColorType(GrColorType surfaceColorType,
                                                  const GrBackendFormat& surfaceFormat,
                                                  GrColorType srcColorType) const override;
@@ -61,8 +64,13 @@ public:
         return fPreferredStencilFormat;
     }
 
-    bool canCopyAsBlit(MTLPixelFormat dstFormat, int dstSampleCount, MTLPixelFormat srcFormat,
-                       int srcSampleCount, const SkIRect& srcRect, const SkIPoint& dstPoint,
+    bool canCopyAsBlit(GrSurface* dst, int dstSampleCount, GrSurface* src, int srcSampleCount,
+                       const SkIRect& srcRect, const SkIPoint& dstPoint,
+                       bool areDstSrcSameObj) const;
+
+    bool canCopyAsBlit(MTLPixelFormat dstFormat, int dstSampleCount,
+                       MTLPixelFormat srcFormat, int srcSampleCount,
+                       const SkIRect& srcRect, const SkIPoint& dstPoint,
                        bool areDstSrcSameObj) const;
 
     bool canCopyAsResolve(GrSurface* dst, int dstSampleCount, GrSurface* src, int srcSampleCount,
@@ -78,10 +86,10 @@ public:
         return fColorTypeToFormatTable[idx];
     }
 
-    bool canClearTextureOnCreation() const override { return true; }
-
-    GrSwizzle getTextureSwizzle(const GrBackendFormat&, GrColorType) const override;
+    GrSwizzle getReadSwizzle(const GrBackendFormat&, GrColorType) const override;
     GrSwizzle getOutputSwizzle(const GrBackendFormat&, GrColorType) const override;
+
+    GrProgramDesc makeDesc(const GrRenderTarget*, const GrProgramInfo&) const override;
 
 #if GR_TEST_UTILS
     std::vector<TestFormatColorTypeCombination> getTestingCombinations() const override;
@@ -102,6 +110,7 @@ private:
                           const SkIRect& srcRect, const SkIPoint& dstPoint) const override;
     GrBackendFormat onGetDefaultBackendFormat(GrColorType, GrRenderable) const override;
     GrPixelConfig onGetConfigFromBackendFormat(const GrBackendFormat&, GrColorType) const override;
+    GrPixelConfig onGetConfigFromCompressedBackendFormat(const GrBackendFormat&) const override;
     bool onAreColorTypeAndFormatCompatible(GrColorType, const GrBackendFormat&) const override;
 
     SupportedRead onSupportedReadPixelsColorType(GrColorType, const GrBackendFormat&,
@@ -118,7 +127,7 @@ private:
         };
         uint32_t fFlags = 0;
 
-        GrSwizzle fTextureSwizzle;
+        GrSwizzle fReadSwizzle;
         GrSwizzle fOutputSwizzle;
     };
 
@@ -143,13 +152,16 @@ private:
 
         uint16_t fFlags = 0;
 
+        // This value is only valid for regular formats. Compressed formats will be 0.
+        size_t fBytesPerPixel = 0;
+
         std::unique_ptr<ColorTypeInfo[]> fColorTypeInfos;
         int fColorTypeInfoCount = 0;
     };
 #ifdef SK_BUILD_FOR_IOS
-    static constexpr size_t kNumMtlFormats = 18;
+    static constexpr size_t kNumMtlFormats = 17;
 #else
-    static constexpr size_t kNumMtlFormats = 15;
+    static constexpr size_t kNumMtlFormats = 14;
 #endif
     static size_t GetFormatIndex(MTLPixelFormat);
     FormatInfo fFormatTable[kNumMtlFormats];

@@ -118,7 +118,6 @@ sk_sp<SkSpecialSurface> SkSpecialSurface::MakeRaster(const SkImageInfo& info,
 #if SK_SUPPORT_GPU
 ///////////////////////////////////////////////////////////////////////////////
 #include "include/private/GrRecordingContext.h"
-#include "src/core/SkMakeUnique.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/SkGpuDevice.h"
 
@@ -147,10 +146,12 @@ public:
         if (!fProxy) {
             return nullptr;
         }
+        GrColorType ct = SkColorTypeToGrColorType(fCanvas->imageInfo().colorType());
+
         return SkSpecialImage::MakeDeferredFromGpu(fCanvas->getGrContext(),
                                                    this->subset(),
                                                    kNeedNewImageUniqueID_SpecialImage,
-                                                   std::move(fProxy),
+                                                   std::move(fProxy), ct,
                                                    fCanvas->imageInfo().refColorSpace(),
                                                    &this->props());
     }
@@ -168,9 +169,10 @@ sk_sp<SkSpecialSurface> SkSpecialSurface::MakeRenderTarget(GrRecordingContext* c
     if (!context) {
         return nullptr;
     }
-    auto renderTargetContext = context->priv().makeDeferredRenderTargetContext(
-            SkBackingFit::kApprox, width, height, colorType, std::move(colorSpace), 1,
-            GrMipMapped::kNo, kBottomLeft_GrSurfaceOrigin, props);
+    auto renderTargetContext = GrRenderTargetContext::Make(
+            context, colorType, std::move(colorSpace), SkBackingFit::kApprox, {width, height}, 1,
+            GrMipMapped::kNo, GrProtected::kNo, kBottomLeft_GrSurfaceOrigin, SkBudgeted::kYes,
+            props);
     if (!renderTargetContext) {
         return nullptr;
     }

@@ -23,16 +23,17 @@ class ChromecastFlavor(android.AndroidFlavor):
     # on the tempfs (i.e. RAM) /dev/shm. (which is about 140M)
     data_dir = '/cache/skia/'
     self.device_dirs = default.DeviceDirs(
-        bin_dir       = '/cache/skia/bin',
-        dm_dir        = '/dev/shm/skia/dm_out',
-        perf_data_dir = data_dir + 'perf',
-        resource_dir  = data_dir + 'resources',
-        images_dir    = data_dir + 'images',
-        lotties_dir   = data_dir + 'lotties',
-        skp_dir       = data_dir + 'skps',
-        svg_dir       = data_dir + 'svgs',
-        mskp_dir      = data_dir + 'mskp',
-        tmp_dir       = data_dir)
+        bin_dir        = '/cache/skia/bin',
+        dm_dir         = '/dev/shm/skia/dm_out',
+        perf_data_dir  = data_dir + 'perf',
+        resource_dir   = data_dir + 'resources',
+        images_dir     = data_dir + 'images',
+        lotties_dir    = data_dir + 'lotties',
+        skp_dir        = data_dir + 'skps',
+        svg_dir        = data_dir + 'svgs',
+        mskp_dir       = data_dir + 'mskp',
+        tmp_dir        = data_dir,
+        texttraces_dir = '')
 
   @property
   def user_ip_host(self):
@@ -123,8 +124,11 @@ class ChromecastFlavor(android.AndroidFlavor):
               addr, path = tokens[-2:]
               local = os.path.join(out, os.path.basename(path))
               if os.path.exists(local):
-                sym = subprocess.check_output(['addr2line', '-Cfpe', local, addr])
-                line = line.replace(addr, addr + ' ' + sym.strip())
+                try:
+                  sym = subprocess.check_output(['addr2line', '-Cfpe', local, addr])
+                  line = line.replace(addr, addr + ' ' + sym.strip())
+                except subprocess.CalledProcessError:
+                  pass
             print line
           """,
           args=[self.host_dirs.bin_dir],

@@ -44,7 +44,7 @@ public:
         void set(const GrCCPathCacheEntry&, const SkIVector& shift, uint64_t, GrFillRule);
     };
 
-    GR_STATIC_ASSERT(4 * 12 == sizeof(Instance));
+    static_assert(4 * 12 == sizeof(Instance));
 
     static sk_sp<const GrGpuBuffer> FindVertexBuffer(GrOnFlushResourceProvider*);
     static sk_sp<const GrGpuBuffer> FindIndexBuffer(GrOnFlushResourceProvider*);
@@ -80,7 +80,7 @@ private:
 
     const CoverageMode fCoverageMode;
     const TextureSampler fAtlasAccess;
-    SkISize fAtlasSize;
+    SkISize fAtlasDimensions;
     GrSurfaceOrigin fAtlasOrigin;
 
     SkMatrix fLocalMatrix;

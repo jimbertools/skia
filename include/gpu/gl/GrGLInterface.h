@@ -181,8 +181,10 @@ public:
         GrGLFunction<GrGLMapBufferRangeFn> fMapBufferRange;
         GrGLFunction<GrGLMapBufferSubDataFn> fMapBufferSubData;
         GrGLFunction<GrGLMapTexSubImage2DFn> fMapTexSubImage2D;
+        GrGLFunction<GrGLMemoryBarrierFn> fMemoryBarrier;
         GrGLFunction<GrGLMultiDrawArraysIndirectFn> fMultiDrawArraysIndirect;
         GrGLFunction<GrGLMultiDrawElementsIndirectFn> fMultiDrawElementsIndirect;
+        GrGLFunction<GrGLPatchParameteriFn> fPatchParameteri;
         GrGLFunction<GrGLPixelStoreiFn> fPixelStorei;
         GrGLFunction<GrGLPolygonModeFn> fPolygonMode;
         GrGLFunction<GrGLPopGroupMarkerFn> fPopGroupMarker;
@@ -325,6 +327,10 @@ public:
 
         /* EXT_window_rectangles */
         GrGLFunction<GrGLWindowRectanglesFn> fWindowRectangles;
+
+        /* GL_QCOM_tiled_rendering */
+        GrGLFunction<GrGLStartTilingFn> fStartTiling;
+        GrGLFunction<GrGLEndTilingFn> fEndTiling;
     } fFunctions;
 
 #if GR_TEST_UTILS

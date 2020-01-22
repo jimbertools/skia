@@ -8,12 +8,12 @@
 #include "tools/DDLPromiseImageHelper.h"
 
 #include "include/core/SkDeferredDisplayListRecorder.h"
+#include "include/core/SkPicture.h"
+#include "include/core/SkSerialProcs.h"
 #include "include/core/SkYUVAIndex.h"
 #include "include/core/SkYUVASizeInfo.h"
 #include "include/gpu/GrContext.h"
 #include "src/core/SkCachedData.h"
-#include "src/gpu/GrContextPriv.h"
-#include "src/gpu/GrGpu.h"
 #include "src/image/SkImage_Base.h"
 #include "src/image/SkImage_GpuYUVA.h"
 
@@ -44,12 +44,9 @@ sk_sp<SkData> DDLPromiseImageHelper::deflateSKP(const SkPicture* inputPicture) {
         auto helper = static_cast<DDLPromiseImageHelper*>(ctx);
 
         int id = helper->findOrDefineImage(image);
-        if (id >= 0) {
-            SkASSERT(helper->isValidID(id));
-            return SkData::MakeWithCopy(&id, sizeof(id));
-        }
 
-        return nullptr;
+        // Even if 'id' is invalid (i.e., -1) write it to the SKP
+        return SkData::MakeWithCopy(&id, sizeof(id));
     };
 
     return inputPicture->serialize(&procs);
@@ -67,11 +64,11 @@ static GrBackendTexture create_yuva_texture(GrContext* context, const SkPixmap& 
         }
     }
     if (2 == channelCount) {
-        SkASSERT(kRG_88_SkColorType == pm.colorType());
+        SkASSERT(kR8G8_unorm_SkColorType == pm.colorType());
     }
 #endif
 
-    return context->priv().createBackendTexture(&pm, 1, GrRenderable::kNo, GrProtected::kNo);
+    return context->createBackendTexture(&pm, 1, GrRenderable::kNo, GrProtected::kNo);
 }
 
 void DDLPromiseImageHelper::uploadAllToGPU(GrContext* context) {
@@ -100,7 +97,7 @@ void DDLPromiseImageHelper::uploadAllToGPU(GrContext* context) {
 
             const SkBitmap& bm = info.normalBitmap();
 
-            GrBackendTexture backendTex = context->priv().createBackendTexture(
+            GrBackendTexture backendTex = context->createBackendTexture(
                                                         &bm.pixmap(), 1, GrRenderable::kNo,
                                                         GrProtected::kNo);
 
@@ -139,7 +136,9 @@ sk_sp<SkImage> DDLPromiseImageHelper::PromiseImageCreator(const void* rawData,
     SkASSERT(length == sizeof(int));
 
     const int* indexPtr = static_cast<const int*>(rawData);
-    SkASSERT(helper->isValidID(*indexPtr));
+    if (!helper->isValidID(*indexPtr)) {
+        return nullptr;
+    }
 
     const DDLPromiseImageHelper::PromiseImageInfo& curImage = helper->getInfo(*indexPtr);
 
@@ -275,7 +274,7 @@ int DDLPromiseImageHelper::addImage(SkImage* image) {
             if (kUnknown_SkColorType == colorTypes[texIdx]) {
                 colorTypes[texIdx] = kAlpha_8_SkColorType;
             } else {
-                colorTypes[texIdx] = kRG_88_SkColorType;
+                colorTypes[texIdx] = kR8G8_unorm_SkColorType;
             }
         }
 
@@ -293,6 +292,9 @@ int DDLPromiseImageHelper::addImage(SkImage* image) {
         }
     } else {
         sk_sp<SkImage> rasterImage = image->makeRasterImage(); // force decoding of lazy images
+        if (!rasterImage) {
+            return -1;
+        }
 
         SkBitmap tmp;
         tmp.allocPixels(overallII);
@@ -317,6 +319,5 @@ int DDLPromiseImageHelper::findOrDefineImage(SkImage* image) {
     }
 
     int newID = this->addImage(image);
-    SkASSERT(this->isValidID(newID));
     return newID;
 }

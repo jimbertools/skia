@@ -11,7 +11,6 @@
 #include "include/core/SkPaint.h"
 #include "include/core/SkPicture.h"
 #include "include/core/SkSurface.h"
-#include "src/core/SkMakeUnique.h"
 #include "src/core/SkTLazy.h"
 #include "src/image/SkImage_Base.h"
 
@@ -53,8 +52,8 @@ SkImageGenerator::MakeFromPicture(const SkISize& size, sk_sp<SkPicture> picture,
         colorType = kRGBA_F16_SkColorType;
     }
 
-    SkImageInfo info = SkImageInfo::Make(size.width(), size.height(), colorType,
-                                         kPremul_SkAlphaType, std::move(colorSpace));
+    SkImageInfo info =
+            SkImageInfo::Make(size, colorType, kPremul_SkAlphaType, std::move(colorSpace));
     return std::unique_ptr<SkImageGenerator>(
         new SkPictureImageGenerator(info, std::move(picture), matrix, paint));
 }

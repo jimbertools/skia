@@ -119,7 +119,7 @@ private:
             : INHERITED(ClassID()), fResult(result), fCombinable(combinable) {
         fValueRanges.push_back({value, range});
         this->setBounds(SkRect::MakeXYWH(range.fOffset, 0, range.fOffset + range.fLength, 1),
-                        HasAABloat::kNo, IsZeroArea::kNo);
+                        HasAABloat::kNo, IsHairline::kNo);
     }
 
     void onPrepare(GrOpFlushState*) override {}
@@ -130,7 +130,11 @@ private:
         }
     }
 
-    CombineResult onCombineIfPossible(GrOp* t, const GrCaps&) override {
+    CombineResult onCombineIfPossible(GrOp* t, GrRecordingContext::Arenas* arenas,
+                                      const GrCaps&) override {
+        // This op doesn't use the arenas, but make sure the GrOpsTask is sending it
+        SkASSERT(arenas);
+        (void) arenas;
         auto that = t->cast<TestOp>();
         int v0 = fValueRanges[0].fValue;
         int v1 = that->fValueRanges[0].fValue;
@@ -171,11 +175,16 @@ DEF_GPUTEST(OpChainTest, reporter, /*ctxInfo*/) {
         context->priv().caps()->getDefaultBackendFormat(GrColorType::kRGBA_8888,
                                                         GrRenderable::kYes);
 
+    static const GrSurfaceOrigin kOrigin = kTopLeft_GrSurfaceOrigin;
     auto proxy = context->priv().proxyProvider()->createProxy(
-            format, desc, GrRenderable::kYes, 1, kTopLeft_GrSurfaceOrigin, GrMipMapped::kNo,
+            format, desc, GrRenderable::kYes, 1, kOrigin, GrMipMapped::kNo,
             SkBackingFit::kExact, SkBudgeted::kNo, GrProtected::kNo, GrInternalSurfaceFlags::kNone);
     SkASSERT(proxy);
     proxy->instantiate(context->priv().resourceProvider());
+
+    GrSwizzle outSwizzle = context->priv().caps()->getOutputSwizzle(format,
+                                                                    GrColorType::kRGBA_8888);
+
     int result[result_width()];
     int validResult[result_width()];
 
@@ -205,9 +214,9 @@ DEF_GPUTEST(OpChainTest, reporter, /*ctxInfo*/) {
                 GrOpFlushState flushState(context->priv().getGpu(),
                                           context->priv().resourceProvider(),
                                           &tracker);
-                GrOpsTask opsTask(sk_ref_sp(context->priv().opMemoryPool()),
-                                            sk_ref_sp(proxy->asRenderTargetProxy()),
-                                            context->priv().auditTrail());
+                GrOpsTask opsTask(context->priv().arenas(),
+                                  GrSurfaceProxyView(proxy, kOrigin, outSwizzle),
+                                  context->priv().auditTrail());
                 // This assumes the particular values of kRanges.
                 std::fill_n(result, result_width(), -1);
                 std::fill_n(validResult, result_width(), -1);

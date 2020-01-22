@@ -13,7 +13,6 @@ layout(ctype=SkRect) uniform float4 proxyRect;
 uniform half blurRadius;
 
 @header {
-    #include "include/effects/SkBlurMaskFilter.h"
     #include "include/gpu/GrContext.h"
     #include "include/private/GrRecordingContext.h"
     #include "src/core/SkBlurPriv.h"
@@ -31,7 +30,7 @@ uniform half blurRadius;
 @class {
     static sk_sp<GrTextureProxy> find_or_create_rrect_blur_mask(GrRecordingContext* context,
                                                                 const SkRRect& rrectToDraw,
-                                                                const SkISize& size,
+                                                                const SkISize& dimensions,
                                                                 float xformedSigma) {
         static const GrUniqueKey::Domain kDomain = GrUniqueKey::GenerateDomain();
         GrUniqueKey key;
@@ -53,11 +52,11 @@ uniform half blurRadius;
         sk_sp<GrTextureProxy> mask(proxyProvider->findOrCreateProxyByUniqueKey(
                 key, GrColorType::kAlpha_8, kBottomLeft_GrSurfaceOrigin));
         if (!mask) {
-            // TODO: this could be approx but the texture coords will need to be updated
-            auto rtc =
-                    context->priv().makeDeferredRenderTargetContextWithFallback(
-                                                SkBackingFit::kExact, size.fWidth,
-                                                size.fHeight, GrColorType::kAlpha_8, nullptr);
+            // TODO: this could be SkBackingFit::kApprox, but:
+            //   1) The texture coords would need to be updated.
+            //   2) We would have to use GrTextureDomain::kClamp_Mode for the GaussianBlur.
+            auto rtc = GrRenderTargetContext::MakeWithFallback(
+                    context, GrColorType::kAlpha_8, nullptr, SkBackingFit::kExact, dimensions);
             if (!rtc) {
                 return nullptr;
             }
@@ -76,14 +75,15 @@ uniform half blurRadius;
             auto rtc2 =
                       SkGpuBlurUtils::GaussianBlur(context,
                                                    std::move(srcProxy),
+                                                   rtc->colorInfo().colorType(),
+                                                   rtc->colorInfo().alphaType(),
                                                    SkIPoint::Make(0, 0),
                                                    nullptr,
-                                                   SkIRect::MakeWH(size.fWidth, size.fHeight),
-                                                   SkIRect::EmptyIRect(),
+                                                   SkIRect::MakeSize(dimensions),
+                                                   SkIRect::MakeEmpty(),
                                                    xformedSigma,
                                                    xformedSigma,
                                                    GrTextureDomain::kIgnore_Mode,
-                                                   kPremul_SkAlphaType,
                                                    SkBackingFit::kExact);
             if (!rtc2) {
                 return nullptr;
@@ -130,7 +130,7 @@ uniform half blurRadius;
         // sufficiently small relative to both the size of the corner radius and the
         // width (and height) of the rrect.
         SkRRect rrectToDraw;
-        SkISize size;
+        SkISize dimensions;
         SkScalar ignored[kSkBlurRRectMaxDivisions];
         int ignoredSize;
         uint32_t ignored32;
@@ -138,7 +138,7 @@ uniform half blurRadius;
         bool ninePatchable = SkComputeBlurredRRectParams(srcRRect, devRRect,
                                                          SkRect::MakeEmpty(),
                                                          sigma, xformedSigma,
-                                                         &rrectToDraw, &size,
+                                                         &rrectToDraw, &dimensions,
                                                          ignored, ignored,
                                                          ignored, ignored,
                                                          &ignoredSize, &ignoredSize,
@@ -148,7 +148,7 @@ uniform half blurRadius;
         }
 
         sk_sp<GrTextureProxy> mask(find_or_create_rrect_blur_mask(context, rrectToDraw,
-                                                                  size, xformedSigma));
+                                                                  dimensions, xformedSigma));
         if (!mask) {
             return nullptr;
         }

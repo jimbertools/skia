@@ -12,7 +12,6 @@
 
 bool FuzzSKSL2Pipeline(sk_sp<SkData> bytes) {
     SkSL::Compiler compiler;
-    SkSL::String output;
     SkSL::Program::Settings settings;
     sk_sp<GrShaderCaps> caps = SkSL::ShaderCapsFactory::Default();
     settings.fCaps = caps.get();
@@ -21,8 +20,8 @@ bool FuzzSKSL2Pipeline(sk_sp<SkData> bytes) {
                                                     SkSL::String((const char*) bytes->data(),
                                                                  bytes->size()),
                                                     settings);
-    std::vector<SkSL::Compiler::FormatArg> formatArgs;
-    if (!program || !compiler.toPipelineStage(*program, &output, &formatArgs)) {
+    SkSL::PipelineStageArgs args;
+    if (!program || !compiler.toPipelineStage(*program, &args)) {
         return false;
     }
     return true;

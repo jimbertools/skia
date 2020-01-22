@@ -299,7 +299,7 @@ template<int N> inline void GrMtlPipelineStateDataManager::setMatrices(
 
 template<> struct set_uniform_matrix<2> {
     inline static void set(void* buffer, int uniformOffset, int count, const float matrices[]) {
-        GR_STATIC_ASSERT(sizeof(float) == 4);
+        static_assert(sizeof(float) == 4);
         buffer = static_cast<char*>(buffer) + uniformOffset;
         memcpy(buffer, matrices, count * 4 * sizeof(float));
     }
@@ -307,7 +307,7 @@ template<> struct set_uniform_matrix<2> {
 
 template<> struct set_uniform_matrix<3> {
     inline static void set(void* buffer, int uniformOffset, int count, const float matrices[]) {
-        GR_STATIC_ASSERT(sizeof(float) == 4);
+        static_assert(sizeof(float) == 4);
         buffer = static_cast<char*>(buffer) + uniformOffset;
         for (int i = 0; i < count; ++i) {
             const float* matrix = &matrices[3 * 3 * i];
@@ -321,7 +321,7 @@ template<> struct set_uniform_matrix<3> {
 
 template<> struct set_uniform_matrix<4> {
     inline static void set(void* buffer, int uniformOffset, int count, const float matrices[]) {
-        GR_STATIC_ASSERT(sizeof(float) == 4);
+        static_assert(sizeof(float) == 4);
         buffer = static_cast<char*>(buffer) + uniformOffset;
         memcpy(buffer, matrices, count * 16 * sizeof(float));
     }
@@ -332,12 +332,27 @@ void GrMtlPipelineStateDataManager::uploadAndBindUniformBuffers(
         id<MTLRenderCommandEncoder> renderCmdEncoder) const {
     if (fUniformSize && fUniformsDirty) {
         SkASSERT(fUniformSize < 4*1024);
-        [renderCmdEncoder setVertexBytes: fUniformData.get()
-                                  length: fUniformSize
-                                 atIndex: GrMtlUniformHandler::kUniformBinding];
-        [renderCmdEncoder setFragmentBytes: fUniformData.get()
-                                    length: fUniformSize
-                                   atIndex: GrMtlUniformHandler::kUniformBinding];
+        if (@available(macOS 10.11, iOS 8.3, *)) {
+            [renderCmdEncoder setVertexBytes: fUniformData.get()
+                                      length: fUniformSize
+                                     atIndex: GrMtlUniformHandler::kUniformBinding];
+            [renderCmdEncoder setFragmentBytes: fUniformData.get()
+                                        length: fUniformSize
+                                       atIndex: GrMtlUniformHandler::kUniformBinding];
+        } else {
+            size_t bufferOffset;
+            id<MTLBuffer> uniformBuffer = gpu->resourceProvider().getDynamicBuffer(
+                                                  fUniformSize, &bufferOffset);
+            SkASSERT(uniformBuffer);
+            char* bufferData = (char*) uniformBuffer.contents + bufferOffset;
+            memcpy(bufferData, fUniformData.get(), fUniformSize);
+            [renderCmdEncoder setVertexBuffer: uniformBuffer
+                                       offset: bufferOffset
+                                      atIndex: GrMtlUniformHandler::kUniformBinding];
+            [renderCmdEncoder setFragmentBuffer: uniformBuffer
+                                         offset: bufferOffset
+                                        atIndex: GrMtlUniformHandler::kUniformBinding];
+        }
         fUniformsDirty = false;
     }
 }

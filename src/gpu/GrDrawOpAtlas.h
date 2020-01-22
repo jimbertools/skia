@@ -125,7 +125,7 @@ public:
                          int width, int height,
                          const void* image, SkIPoint16* loc);
 
-    const sk_sp<GrTextureProxy>* getProxies() const { return fProxies; }
+    const GrSurfaceProxyView* getViews() const { return fViews; }
 
     uint64_t atlasGeneration() const { return fAtlasGeneration; }
 
@@ -372,8 +372,9 @@ private:
         // the front and remove from the back there is no need for MRU.
     }
 
-    bool uploadToPage(unsigned int pageIdx, AtlasID* id, GrDeferredUploadTarget* target,
-                      int width, int height, const void* image, SkIPoint16* loc);
+    bool uploadToPage(const GrCaps&, unsigned int pageIdx, AtlasID* id,
+                      GrDeferredUploadTarget* target, int width, int height, const void* image,
+                      SkIPoint16* loc);
 
     bool createPages(GrProxyProvider*);
     bool activateNewPage(GrResourceProvider*);
@@ -411,7 +412,7 @@ private:
         PlotList fPlotList;
     };
     // proxies kept separate to make it easier to pass them up to client
-    sk_sp<GrTextureProxy> fProxies[kMaxMultitexturePages];
+    GrSurfaceProxyView fViews[kMaxMultitexturePages];
     Page fPages[kMaxMultitexturePages];
     uint32_t fMaxPages;
 

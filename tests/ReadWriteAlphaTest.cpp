@@ -7,14 +7,13 @@
 
 #include "tests/Test.h"
 
-// This test is specific to the GPU backend.
 #include "include/core/SkCanvas.h"
 #include "include/core/SkSurface.h"
 #include "include/gpu/GrContext.h"
 #include "include/private/SkTo.h"
 #include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrImageInfo.h"
 #include "src/gpu/GrProxyProvider.h"
-#include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrSurfaceContext.h"
 #include "src/gpu/GrSurfaceProxy.h"
 #include "src/gpu/GrTextureProxy.h"
@@ -75,8 +74,8 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReadWriteAlpha, reporter, ctxInfo) {
             ERRORF(reporter, "Could not create alpha texture.");
             return;
         }
-        auto sContext = context->priv().makeWrappedSurfaceContext(
-                std::move(proxy), GrColorType::kAlpha_8, kPremul_SkAlphaType);
+        auto sContext = GrSurfaceContext::Make(context, std::move(proxy), GrColorType::kAlpha_8,
+                                               kPremul_SkAlphaType, nullptr);
 
         sk_sp<SkSurface> surf(SkSurface::MakeRenderTarget(context, SkBudgeted::kNo, ii));
 
@@ -188,14 +187,14 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReadWriteAlpha, reporter, ctxInfo) {
             auto origin = GrRenderable::kYes == renderable ? kBottomLeft_GrSurfaceOrigin
                                                            : kTopLeft_GrSurfaceOrigin;
             auto proxy = sk_gpu_test::MakeTextureProxyFromData(
-                    context, renderable, X_SIZE, Y_SIZE, info.fColorType, info.fAlphaType, origin,
-                    rgbaData, 0);
+                    context, renderable, origin,
+                    {info.fColorType, info.fAlphaType, nullptr, X_SIZE, Y_SIZE}, rgbaData, 0);
             if (!proxy) {
                 continue;
             }
 
-            auto sContext = context->priv().makeWrappedSurfaceContext(
-                    std::move(proxy), info.fColorType, kPremul_SkAlphaType);
+            auto sContext = GrSurfaceContext::Make(context, std::move(proxy), info.fColorType,
+                                                   kPremul_SkAlphaType, nullptr);
 
             for (auto rowBytes : kRowBytes) {
                 size_t nonZeroRowBytes = rowBytes ? rowBytes : X_SIZE;

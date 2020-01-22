@@ -26,6 +26,7 @@
 #include "src/gpu/GrClip.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrFragmentProcessor.h"
+#include "src/gpu/GrImageInfo.h"
 #include "src/gpu/GrPaint.h"
 #include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/GrStyle.h"
@@ -51,11 +52,11 @@ static SkBitmap read_back(GrRenderTargetContext* rtc, int width, int height) {
     return bm;
 }
 
-static SkPath make_path(const SkRect& outer, int inset, SkPath::FillType fill) {
+static SkPath make_path(const SkRect& outer, int inset, SkPathFillType fill) {
     SkPath p;
 
-    p.addRect(outer, SkPath::kCW_Direction);
-    p.addRect(outer.makeInset(inset, inset), SkPath::kCCW_Direction);
+    p.addRect(outer, SkPathDirection::kCW);
+    p.addRect(outer.makeInset(inset, inset), SkPathDirection::kCCW);
     p.setFillType(fill);
     return p;
 }
@@ -76,16 +77,16 @@ static const int kPad = 3;
 
 static void run_test(GrContext* ctx, skiatest::Reporter* reporter) {
     SkPath invPath = make_path(SkRect::MakeXYWH(0, 0, kBigSize, kBigSize),
-                               kBigSize/2-1, SkPath::kInverseWinding_FillType);
+                               kBigSize/2-1, SkPathFillType::kInverseWinding);
     SkPath path = make_path(SkRect::MakeXYWH(0, 0, kBigSize, kBigSize),
-                            kPad, SkPath::kWinding_FillType);
+                            kPad, SkPathFillType::kWinding);
 
     GrStyle style(SkStrokeRec::kFill_InitStyle);
 
     {
-        auto rtc = ctx->priv().makeDeferredRenderTargetContext(
-                SkBackingFit::kApprox, kBigSize/2 + 1, kBigSize/2 + 1,
-                GrColorType::kRGBA_8888, nullptr);
+        auto rtc = GrRenderTargetContext::Make(
+            ctx, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kApprox,
+            {kBigSize/2 + 1, kBigSize/2 + 1});
 
         rtc->clear(nullptr, { 0, 0, 0, 1 }, GrRenderTargetContext::CanClearFullscreen::kYes);
 
@@ -102,8 +103,8 @@ static void run_test(GrContext* ctx, skiatest::Reporter* reporter) {
     }
 
     {
-        auto rtc = ctx->priv().makeDeferredRenderTargetContext(
-                SkBackingFit::kExact, kBigSize, kBigSize, GrColorType::kRGBA_8888, nullptr);
+        auto rtc = GrRenderTargetContext::Make(
+            ctx, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kExact, {kBigSize, kBigSize});
 
         rtc->clear(nullptr, { 0, 0, 0, 1 }, GrRenderTargetContext::CanClearFullscreen::kYes);
 

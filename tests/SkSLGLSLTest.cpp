@@ -817,24 +817,32 @@ DEF_TEST(SkSLShortCircuitBoolFolding, r) {
          "        sk_FragColor.r = 1;"
          "    } else if (false && expr1) {"  // -> if (false) -> block removed
          "        sk_FragColor.r = -2;"
-         "    } else if (false || expr2) {"  // -> if (expr2)
+         "    } else if (true ^^ expr1) {"   // -> if (!expr1)
          "        sk_FragColor.r = 3;"
-         "    } else if (true || expr2) {"   // -> if (true) -> replaces unreachable else
+         "    } else if (false ^^ expr2) {"  // -> if (expr2)
          "        sk_FragColor.r = 4;"
+         "    } else if (false || expr2) {"  // -> if (expr2)
+         "        sk_FragColor.r = 5;"
+         "    } else if (true || expr2) {"   // -> if (true) -> replaces unreachable else
+         "        sk_FragColor.r = 6;"
          "    } else {"                      // removed
-         "        sk_FragColor.r = -5;"
+         "        sk_FragColor.r = -7;"
          "    }"
          // Test short-circuiting of right hand side boolean literals
          "    if (expr1 && true) {"          // -> if (expr1)
          "        sk_FragColor.r = 1;"
          "    } else if (expr1 && false) {"  // -> if (false) -> block removed
          "        sk_FragColor.r = -2;"
-         "    } else if (expr2 || false) {"  // -> if (expr2)
+         "    } else if (expr1 ^^ true) {"   // -> if (!expr1)
          "        sk_FragColor.r = 3;"
-         "    } else if (expr2 || true) {"   // -> if (true) -> replaces unreachable else
+         "    } else if (expr2 ^^ false) {"  // -> if (expr2)
          "        sk_FragColor.r = 4;"
+         "    } else if (expr2 || false) {"  // -> if (expr2)
+         "        sk_FragColor.r = 5;"
+         "    } else if (expr2 || true) {"   // -> if (true) -> replaces unreachable else
+         "        sk_FragColor.r = 6;"
          "    } else {"                      // removed
-         "        sk_FragColor.r = -5;"
+         "        sk_FragColor.r = -7;"
          "    }"
          "}",
          *SkSL::ShaderCapsFactory::Default(),
@@ -845,17 +853,25 @@ DEF_TEST(SkSLShortCircuitBoolFolding, r) {
          "    bool expr2 = gl_FragCoord.y > 0.0;\n"
          "    if (expr1) {\n"
          "        sk_FragColor.x = 1.0;\n"
-         "    } else if (expr2) {\n"
+         "    } else if (!expr1) {\n"
          "        sk_FragColor.x = 3.0;\n"
-         "    } else {\n"
+         "    } else if (expr2) {\n"
          "        sk_FragColor.x = 4.0;\n"
+         "    } else if (expr2) {\n"
+         "        sk_FragColor.x = 5.0;\n"
+         "    } else {\n"
+         "        sk_FragColor.x = 6.0;\n"
          "    }\n"
          "    if (expr1) {\n"
          "        sk_FragColor.x = 1.0;\n"
-         "    } else if (expr2) {\n"
+         "    } else if (!expr1) {\n"
          "        sk_FragColor.x = 3.0;\n"
-         "    } else {\n"
+         "    } else if (expr2) {\n"
          "        sk_FragColor.x = 4.0;\n"
+         "    } else if (expr2) {\n"
+         "        sk_FragColor.x = 5.0;\n"
+         "    } else {\n"
+         "        sk_FragColor.x = 6.0;\n"
          "    }\n"
          "}\n");
 }
@@ -1245,11 +1261,11 @@ DEF_TEST(SkSLFragCoord, r) {
          SkSL::Program::kVertex_Kind);
 
     test(r,
-         "in uniform float4 sk_RTAdjust; in float4 pos; void main() { sk_Position = pos; }",
+         "uniform float4 sk_RTAdjust; in float4 pos; void main() { sk_Position = pos; }",
          *SkSL::ShaderCapsFactory::CannotUseFragCoord(),
          "#version 400\n"
          "out vec4 sk_FragCoord_Workaround;\n"
-         "in uniform vec4 sk_RTAdjust;\n"
+         "uniform vec4 sk_RTAdjust;\n"
          "in vec4 pos;\n"
          "void main() {\n"
          "    sk_FragCoord_Workaround = (gl_Position = pos);\n"
@@ -1313,6 +1329,16 @@ DEF_TEST(SkSLClockwise, r) {
          "out vec4 sk_FragColor;\n"
          "void main() {\n"
          "    sk_FragColor = vec4(float(gl_FrontFacing ? 1 : -1));\n"
+         "}\n");
+}
+
+DEF_TEST(SkSLSampleMask, r) {
+    test(r,
+         "void main() { sk_SampleMask[0] |= 8; }",
+         *SkSL::ShaderCapsFactory::SampleMaskSupport(),
+         "#version 400\n"
+         "void main() {\n"
+         "    gl_SampleMask[0] |= 8;\n"
          "}\n");
 }
 
@@ -2300,21 +2326,126 @@ DEF_TEST(SkSLWorkaroundRemovePowWithConstantExponent, r) {
          );
 }
 
+DEF_TEST(SkSLSwizzleLTRB, r) {
+    test(r,
+         "void main() {"
+         "    sk_FragColor = sk_FragColor.BRTL;"
+         "}",
+         *SkSL::ShaderCapsFactory::RemovePowWithConstantExponent(),
+         "#version 400\n"
+         "out vec4 sk_FragColor;\n"
+         "void main() {\n"
+         "    sk_FragColor = sk_FragColor.wzyx;\n"
+         "}\n",
+         SkSL::Program::kFragment_Kind
+         );
+}
+
 DEF_TEST(SkSLSwizzleConstants, r) {
     test(r,
          "void main() {"
          "    half4 v = half4(half(sqrt(1)));"
-         "    sk_FragColor = v.rgb1;"
-         "    half4 c = half4(1);"
-         "    sk_FragColor = c.rgb0;"
+         "    sk_FragColor = half4(v.x, 1, 1, 1);"
+         "    sk_FragColor = half4(v.1, 1, 1, 1);"
+         "    sk_FragColor = half4(v.xy, 1, 1);"
+         "    sk_FragColor = half4(v.x1, 1, 1);"
+         "    sk_FragColor = half4(v.0y, 1, 1);"
+         "    sk_FragColor = half4(v.10, 1, 1);"
+         "    sk_FragColor = half4(v.xyz, 1);"
+         "    sk_FragColor = half4(v.xy1, 1);"
+         "    sk_FragColor = half4(v.x0z, 1);"
+         "    sk_FragColor = half4(v.x10, 1);"
+         "    sk_FragColor = half4(v.1yz, 1);"
+         "    sk_FragColor = half4(v.0y1, 1);"
+         "    sk_FragColor = half4(v.11z, 1);"
+         "    sk_FragColor = half4(v.101, 1);"
+         "    sk_FragColor = v.xyzw;"
+         "    sk_FragColor = v.xyz1;"
+         "    sk_FragColor = v.xy0w;"
+         "    sk_FragColor = v.xy10;"
+         "    sk_FragColor = v.x1zw;"
+         "    sk_FragColor = v.x0z1;"
+         "    sk_FragColor = v.x11w;"
+         "    sk_FragColor = v.x101;"
+         "    sk_FragColor = v.1yzw;"
+         "    sk_FragColor = v.0yz1;"
+         "    sk_FragColor = v.0y1w;"
+         "    sk_FragColor = v.1y11;"
+         "    sk_FragColor = v.00zw;"
+         "    sk_FragColor = v.00z1;"
+         "    sk_FragColor = v.011w;"
+         "    sk_FragColor = v.1101;"
          "}",
          *SkSL::ShaderCapsFactory::RemovePowWithConstantExponent(),
          "#version 400\n"
          "out vec4 sk_FragColor;\n"
          "void main() {\n"
          "    vec4 v = vec4(sqrt(1.0));\n"
+         "    sk_FragColor = vec4(v.x, 1.0, 1.0, 1.0);\n"
+         "    sk_FragColor = vec4(1, 1.0, 1.0, 1.0);\n"
+         "    sk_FragColor = vec4(v.xy, 1.0, 1.0);\n"
+         "    sk_FragColor = vec4(vec2(v.x, 1), 1.0, 1.0);\n"
+         "    sk_FragColor = vec4(vec2(0, v.y), 1.0, 1.0);\n"
+         "    sk_FragColor = vec4(vec2(1, 0), 1.0, 1.0);\n"
+         "    sk_FragColor = vec4(v.xyz, 1.0);\n"
+         "    sk_FragColor = vec4(vec3(v.xy, 1), 1.0);\n"
+         "    sk_FragColor = vec4(vec3(v.xz, 0).xzy, 1.0);\n"
+         "    sk_FragColor = vec4(vec3(v.x, 1, 0), 1.0);\n"
+         "    sk_FragColor = vec4(vec3(1, v.yz), 1.0);\n"
+         "    sk_FragColor = vec4(vec3(v.y, 0, 1).yxz, 1.0);\n"
+         "    sk_FragColor = vec4(vec3(1, 1, v.z), 1.0);\n"
+         "    sk_FragColor = vec4(vec3(1, 0, 1), 1.0);\n"
+         "    sk_FragColor = v;\n"
          "    sk_FragColor = vec4(v.xyz, 1);\n"
-         "    sk_FragColor = vec4(vec4(1.0).xyz, 0);\n"
+         "    sk_FragColor = vec4(v.xyw, 0).xywz;\n"
+         "    sk_FragColor = vec4(v.xy, 1, 0);\n"
+         "    sk_FragColor = vec4(v.xzw, 1).xwyz;\n"
+         "    sk_FragColor = vec4(v.xz, 0, 1).xzyw;\n"
+         "    sk_FragColor = vec4(v.xw, 1, 1).xzwy;\n"
+         "    sk_FragColor = vec4(v.x, 1, 0, 1);\n"
+         "    sk_FragColor = vec4(1, v.yzw);\n"
+         "    sk_FragColor = vec4(v.yz, 0, 1).zxyw;\n"
+         "    sk_FragColor = vec4(v.yw, 0, 1).zxwy;\n"
+         "    sk_FragColor = vec4(v.y, 1, 1, 1).yxzw;\n"
+         "    sk_FragColor = vec4(0, 0, v.zw);\n"
+         "    sk_FragColor = vec4(v.z, 0, 0, 1).yzxw;\n"
+         "    sk_FragColor = vec4(0, 1, 1, v.w);\n"
+         "    sk_FragColor = vec4(1, 1, 0, 1);\n"
+         "}\n",
+         SkSL::Program::kFragment_Kind
+         );
+}
+
+DEF_TEST(SkSLSwizzleOpt, r) {
+    test(r,
+         "void main() {"
+         "    half v = half(sqrt(1));"
+         "    sk_FragColor = half4(v).rgba;"
+         "    sk_FragColor = half4(v).rgb0.abgr;"
+         "    sk_FragColor = half4(v).rgba.00ra;"
+         "    sk_FragColor = half4(v).rgba.rrra.00ra.11ab;"
+         "    sk_FragColor = half4(v).abga.gb11;"
+         "    sk_FragColor = half4(half3(v).rrr.000, 1);"
+         "    sk_FragColor = half4(half3(v).000.rrr, 1);"
+         "    sk_FragColor = half4(v).abgr.abgr;"
+         "    sk_FragColor = half4(half4(v).rrrr.bb, 1, 1);"
+         "    sk_FragColor = half4(half4(v).ba.grgr);"
+         "}",
+         *SkSL::ShaderCapsFactory::Default(),
+         "#version 400\n"
+         "out vec4 sk_FragColor;\n"
+         "void main() {\n"
+         "    float v = sqrt(1.0);\n"
+         "    sk_FragColor = vec4(v);\n"
+         "    sk_FragColor = vec4(0, vec4(v).zyx);\n"
+         "    sk_FragColor = vec4(0, 0, vec4(v).xw);\n"
+         "    sk_FragColor = vec4(1, 1, vec4(v).wx);\n"
+         "    sk_FragColor = vec4(vec4(v).zy, 1, 1);\n"
+         "    sk_FragColor = vec4(vec3(0, 0, 0), 1.0);\n"
+         "    sk_FragColor = vec4(vec3(0, 0, 0), 1.0);\n"
+         "    sk_FragColor = vec4(v);\n"
+         "    sk_FragColor = vec4(vec4(v).xx, 1.0, 1.0);\n"
+         "    sk_FragColor = vec4(v).wzwz;\n"
          "}\n",
          SkSL::Program::kFragment_Kind
          );
