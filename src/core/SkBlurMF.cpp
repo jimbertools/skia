@@ -887,13 +887,12 @@ sk_sp<GrTextureProxy> SkBlurMaskFilterImpl::filterMaskGPU(GrRecordingContext* co
                                                             srcProxy,
                                                             srcColorType,
                                                             srcAlphaType,
-                                                            SkIPoint::Make(0, 0),
                                                             nullptr,
                                                             clipRect,
-                                                            SkIRect::MakeEmpty(),
+                                                            clipRect,
                                                             xformedSigma,
                                                             xformedSigma,
-                                                            GrTextureDomain::kIgnore_Mode);
+                                                            SkTileMode::kClamp);
     if (!renderTargetContext) {
         return nullptr;
     }
@@ -902,7 +901,7 @@ sk_sp<GrTextureProxy> SkBlurMaskFilterImpl::filterMaskGPU(GrRecordingContext* co
         GrPaint paint;
         // Blend pathTexture over blurTexture.
         paint.addCoverageFragmentProcessor(
-                GrTextureEffect::Make(std::move(srcProxy), srcAlphaType, SkMatrix::I()));
+                GrTextureEffect::Make(std::move(srcProxy), srcAlphaType));
         if (kInner_SkBlurStyle == fBlurStyle) {
             // inner:  dst = dst * src
             paint.setCoverageSetOpXPFactory(SkRegion::kIntersect_Op);

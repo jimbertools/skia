@@ -11,52 +11,30 @@
 #include "include/core/SkMatrix.h"
 #include "include/private/SkM44.h"
 
-class SkCanvasMatrix {
-#ifdef SK_SUPPORT_LEGACY_CANVAS_MATRIX_33
-    SkMatrix fM;
-#else
-    SkM44 fM;
-#endif
+class SkCanvasMatrix : public SkM44 {
 public:
-    SkCanvasMatrix& operator=(const SkMatrix& other) { fM = other; return *this; }
-
-    void reset() { fM.setIdentity(); }
-    void preTranslate(SkScalar x, SkScalar y) { fM.preTranslate(x, y); }
-    void preConcat(const SkMatrix& m) { fM.preConcat(m); }
-
-#ifdef SK_SUPPORT_LEGACY_CANVAS_MATRIX_33
-    operator SkMatrix() const { return fM; }
-    bool isScaleTranslate() const { return fM.isScaleTranslate(); }
-    bool rectStaysRect() const { return fM.rectStaysRect(); }
-
-    float getScaleX() const { return fM.getScaleX(); }
-    float getScaleY() const { return fM.getScaleY(); }
-    float getTranslateX() const { return fM.getTranslateX(); }
-    float getTranslateY() const { return fM.getTranslateY(); }
-
-    bool invert(SkMatrix* inv) const { return fM.invert(inv); }
-
-    bool mapRect(SkRect* dst, const SkRect& src) { return fM.mapRect(dst, src); }
-#else
-    operator SkMatrix() const { return fM.asM33(); }
-    bool isScaleTranslate() const {
-        return fM.atColMajor(1) == 0 && fM.atColMajor(2) == 0 && fM.atColMajor(3) == 0 && fM.atColMajor(4) == 0 &&
-               fM.atColMajor(6) == 0 && fM.atColMajor(7) == 0 && fM.atColMajor(8) == 0 && fM.atColMajor(9) == 0 &&
-               fM.atColMajor(11) == 0 && fM.atColMajor(15) == 1;
+    SkCanvasMatrix& operator=(const SkMatrix& other) {
+        this->SkM44::operator=(other);
+        return *this;
     }
-    bool rectStaysRect() const { return fM.asM33().rectStaysRect(); }
 
-    float getScaleX() const { return fM.atColMajor(0); }
-    float getScaleY() const { return fM.atColMajor(5); }
-    float getTranslateX() const { return fM.atColMajor(12); }
-    float getTranslateY() const { return fM.atColMajor(13); }
+    void reset() { this->setIdentity(); }
 
-    bool invert(SkMatrix* inv) const { return fM.asM33().invert(inv); }
+    operator SkMatrix() const { return this->asM33(); }
+    // the legacy check was just for the 3x3 portion, so we only check those
+    bool isScaleTranslate() const {
+        return this->atColMajor(1) == 0 && this->atColMajor(3) == 0 &&
+               this->atColMajor(4) == 0 && this->atColMajor(7) == 0 &&
+               this->atColMajor(15) == 1;
+    }
+    bool rectStaysRect() const { return this->asM33().rectStaysRect(); }
 
-    bool mapRect(SkRect* dst, const SkRect& src) { return fM.asM33().mapRect(dst, src); }
+    float getScaleX() const { return this->atColMajor(0); }
+    float getScaleY() const { return this->atColMajor(5); }
+    float getTranslateX() const { return this->atColMajor(12); }
+    float getTranslateY() const { return this->atColMajor(13); }
 
-    void preConcat(const SkM44& m) { fM.setConcat(fM, m); }
-#endif
+    bool mapRect(SkRect* dst, const SkRect& src) { return this->asM33().mapRect(dst, src); }
 };
 
 #endif

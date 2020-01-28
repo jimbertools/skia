@@ -11,6 +11,7 @@
 #ifndef GrConfigConversionEffect_DEFINED
 #define GrConfigConversionEffect_DEFINED
 #include "include/core/SkTypes.h"
+#include "include/core/SkMatrix44.h"
 
 #include "include/gpu/GrContext.h"
 #include "src/gpu/GrClip.h"
@@ -88,7 +89,7 @@ public:
         std::unique_ptr<GrFragmentProcessor> upmToPM(
                 new GrConfigConversionEffect(PMConversion::kToPremul));
 
-        paint1.addColorTextureProcessor(dataProxy, kPremul_SkAlphaType, SkMatrix::I());
+        paint1.addColorFragmentProcessor(GrTextureEffect::Make(dataProxy, kPremul_SkAlphaType));
         paint1.addColorFragmentProcessor(pmToUPM->clone());
         paint1.setPorterDuffXPFactory(SkBlendMode::kSrc);
 
@@ -102,16 +103,16 @@ public:
         // draw
         tempRTC->discard();
 
-        paint2.addColorTextureProcessor(readRTC->asTextureProxyRef(), kUnpremul_SkAlphaType,
-                                        SkMatrix::I());
+        paint2.addColorFragmentProcessor(
+                GrTextureEffect::Make(readRTC->asTextureProxyRef(), kUnpremul_SkAlphaType));
         paint2.addColorFragmentProcessor(std::move(upmToPM));
         paint2.setPorterDuffXPFactory(SkBlendMode::kSrc);
 
         tempRTC->fillRectToRect(GrNoClip(), std::move(paint2), GrAA::kNo, SkMatrix::I(), kRect,
                                 kRect);
 
-        paint3.addColorTextureProcessor(tempRTC->asTextureProxyRef(), kPremul_SkAlphaType,
-                                        SkMatrix::I());
+        paint3.addColorFragmentProcessor(
+                GrTextureEffect::Make(tempRTC->asTextureProxyRef(), kPremul_SkAlphaType));
         paint3.addColorFragmentProcessor(std::move(pmToUPM));
         paint3.setPorterDuffXPFactory(SkBlendMode::kSrc);
 

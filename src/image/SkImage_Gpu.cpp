@@ -92,7 +92,7 @@ sk_sp<SkImage> SkImage_Gpu::onMakeColorTypeAndColorSpace(GrRecordingContext* con
     GrPaint paint;
     paint.setPorterDuffXPFactory(SkBlendMode::kSrc);
     sk_sp<GrTextureProxy> proxy = this->asTextureProxyRef(context);
-    paint.addColorTextureProcessor(std::move(proxy), this->alphaType(), SkMatrix::I());
+    paint.addColorFragmentProcessor(GrTextureEffect::Make(std::move(proxy), this->alphaType()));
     if (xform) {
         paint.addColorFragmentProcessor(std::move(xform));
     }
@@ -219,10 +219,11 @@ sk_sp<SkImage> SkImage::MakeFromAdoptedTexture(GrContext* ctx,
 }
 
 sk_sp<SkImage> SkImage::MakeFromCompressed(GrContext* context, sk_sp<SkData> data,
-                                           int width, int height, CompressionType type) {
+                                           int width, int height, CompressionType type,
+                                           GrMipMapped mipMapped) {
     GrProxyProvider* proxyProvider = context->priv().proxyProvider();
     sk_sp<GrTextureProxy> proxy = proxyProvider->createCompressedTextureProxy(
-            {width, height}, SkBudgeted::kYes, type, std::move(data));
+            {width, height}, SkBudgeted::kYes, mipMapped, type, std::move(data));
     if (!proxy) {
         return nullptr;
     }
@@ -311,9 +312,9 @@ sk_sp<SkImage> SkImage::MakeFromYUVATexturesCopyWithExternalBackend(
 
     // Needs to create a render target with external texture
     // in order to draw to it for the yuv->rgb conversion.
-    auto renderTargetContext = ctx->priv().makeBackendTextureRenderTargetContext(
-            backendTexture, imageOrigin, 1, grColorType, std::move(imageColorSpace), nullptr,
-            textureReleaseProc, releaseContext);
+    auto renderTargetContext = GrRenderTargetContext::MakeFromBackendTexture(
+            ctx, grColorType, std::move(imageColorSpace), backendTexture, 1, imageOrigin,
+            nullptr, textureReleaseProc, releaseContext);
     if (!renderTargetContext) {
         return nullptr;
     }
@@ -391,7 +392,7 @@ static sk_sp<SkImage> create_image_from_producer(GrContext* context, GrTexturePr
                                                  SkAlphaType at, uint32_t id,
                                                  GrMipMapped mipMapped) {
     // TODO: have texture producer return a GrSurfaceProxyView
-    sk_sp<GrTextureProxy> proxy(producer->refTextureProxy(mipMapped));
+    auto [proxy, colorType] = producer->refTextureProxy(mipMapped);
     if (!proxy) {
         return nullptr;
     }
@@ -531,12 +532,12 @@ sk_sp<SkImage> SkImage::MakeCrossContextFromPixmap(GrContext* context,
         }
         pixmap = &resized;
     }
-    GrProxyProvider* proxyProvider = context->priv().proxyProvider();
     // Turn the pixmap into a GrTextureProxy
     SkBitmap bmp;
     bmp.installPixels(*pixmap);
+    GrBitmapTextureMaker bitmapMaker(context, bmp, false, false);
     GrMipMapped mipMapped = buildMips ? GrMipMapped::kYes : GrMipMapped::kNo;
-    sk_sp<GrTextureProxy> proxy = proxyProvider->createProxyFromBitmap(bmp, mipMapped);
+    auto [proxy, grCT] = bitmapMaker.refTextureProxy(mipMapped);
     if (!proxy) {
         return SkImage::MakeRasterCopy(*pixmap);
     }
@@ -549,8 +550,9 @@ sk_sp<SkImage> SkImage::MakeCrossContextFromPixmap(GrContext* context,
 
     std::unique_ptr<GrSemaphore> sema = gpu->prepareTextureForCrossContextUsage(texture.get());
 
+    SkColorType skCT = GrColorTypeToSkColorType(grCT);
     auto gen = GrBackendTextureImageGenerator::Make(std::move(texture), proxy->origin(),
-                                                    std::move(sema), pixmap->colorType(),
+                                                    std::move(sema), skCT,
                                                     pixmap->alphaType(),
                                                     pixmap->info().refColorSpace());
     return SkImage::MakeFromGenerator(std::move(gen));
@@ -622,9 +624,9 @@ sk_sp<SkImage> SkImage::MakeFromAHardwareBufferWithData(GrContext* context,
     SkAlphaType at =  pixmap.alphaType();
 
     GrSwizzle swizzle = context->priv().caps()->getReadSwizzle(backendFormat, grColorType);
-    GrSurfaceProxyView view(proxy, surfaceOrigin, swizzle);
+    GrSurfaceProxyView view(std::move(proxy), surfaceOrigin, swizzle);
     sk_sp<SkImage> image = sk_make_sp<SkImage_Gpu>(sk_ref_sp(context), kNeedNewImageUniqueID, at,
-                                                   std::move(view), cs);
+                                                   view, cs);
     if (!image) {
         return nullptr;
     }
@@ -634,9 +636,9 @@ sk_sp<SkImage> SkImage::MakeFromAHardwareBufferWithData(GrContext* context,
         return nullptr;
     }
 
-    GrSurfaceContext surfaceContext(context, std::move(proxy),
+    GrSurfaceContext surfaceContext(context, std::move(view),
                                     SkColorTypeToGrColorType(pixmap.colorType()),
-                                    pixmap.alphaType(), cs, surfaceOrigin, swizzle);
+                                    pixmap.alphaType(), cs);
 
     SkImageInfo srcInfo = SkImageInfo::Make(bufferDesc.width, bufferDesc.height, colorType, at,
                                             std::move(cs));

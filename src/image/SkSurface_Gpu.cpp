@@ -104,16 +104,16 @@ sk_sp<SkImage> SkSurface_Gpu::onNewImageSnapshot(const SkIRect* subset) {
     sk_sp<GrTextureProxy> srcProxy = rtc->asTextureProxyRef();
 
     if (subset) {
-        srcProxy = GrSurfaceProxy::Copy(ctx, rtc->asSurfaceProxy(), rtc->mipMapped(), *subset,
-                                        SkBackingFit::kExact, budgeted);
+        srcProxy = GrSurfaceProxy::Copy(ctx, rtc->asSurfaceProxy(), rtc->colorInfo().colorType(),
+                                        rtc->mipMapped(), *subset, SkBackingFit::kExact, budgeted);
     } else if (!srcProxy || rtc->priv().refsWrappedObjects()) {
         // If the original render target is a buffer originally created by the client, then we don't
         // want to ever retarget the SkSurface at another buffer we create. Force a copy now to avoid
         // copy-on-write.
         SkASSERT(rtc->origin() == rtc->asSurfaceProxy()->origin());
 
-        srcProxy = GrSurfaceProxy::Copy(ctx, rtc->asSurfaceProxy(), rtc->mipMapped(),
-                                        SkBackingFit::kExact, budgeted);
+        srcProxy = GrSurfaceProxy::Copy(ctx, rtc->asSurfaceProxy(), rtc->colorInfo().colorType(),
+                                        rtc->mipMapped(), SkBackingFit::kExact, budgeted);
     }
 
     const SkImageInfo info = fDevice->imageInfo();
@@ -438,9 +438,9 @@ sk_sp<SkSurface> SkSurface::MakeFromBackendTexture(GrContext* context,
         return nullptr;
     }
 
-    auto rtc = context->priv().makeBackendTextureRenderTargetContext(
-            backendTexture, c.origin(), c.sampleCount(), grCT, c.refColorSpace(), &c.surfaceProps(),
-            textureReleaseProc, releaseContext);
+    auto rtc = GrRenderTargetContext::MakeFromBackendTexture(
+            context, grCT, c.refColorSpace(), backendTexture, c.sampleCount(), c.origin(),
+            &c.surfaceProps(), textureReleaseProc, releaseContext);
     if (!rtc) {
         return nullptr;
     }
@@ -519,9 +519,9 @@ sk_sp<SkSurface> SkSurface::MakeFromBackendTexture(GrContext* context, const GrB
         return nullptr;
     }
 
-    auto rtc = context->priv().makeBackendTextureRenderTargetContext(
-            tex, origin, sampleCnt, grColorType, std::move(colorSpace), props, textureReleaseProc,
-            releaseContext);
+    auto rtc = GrRenderTargetContext::MakeFromBackendTexture(
+            context, grColorType, std::move(colorSpace), tex, sampleCnt, origin, props,
+            textureReleaseProc, releaseContext);
     if (!rtc) {
         return nullptr;
     }
@@ -572,15 +572,9 @@ bool SkSurface_Gpu::onReplaceBackendTexture(const GrBackendTexture& backendTextu
                                   sampleCnt, grColorType, true)) {
         return false;
     }
-    auto rtc =
-            context->priv().makeBackendTextureRenderTargetContext(backendTexture,
-                                                                  origin,
-                                                                  sampleCnt,
-                                                                  oldRTC->colorInfo().colorType(),
-                                                                  std::move(colorSpace),
-                                                                  &this->props(),
-                                                                  releaseProc,
-                                                                  releaseContext);
+    auto rtc = GrRenderTargetContext::MakeFromBackendTexture(
+            context, oldRTC->colorInfo().colorType(), std::move(colorSpace), backendTexture,
+            sampleCnt, origin, &this->props(), releaseProc, releaseContext);
     if (!rtc) {
         return false;
     }
@@ -622,8 +616,9 @@ sk_sp<SkSurface> SkSurface::MakeFromBackendRenderTarget(GrContext* context,
         return nullptr;
     }
 
-    auto rtc = context->priv().makeBackendRenderTargetRenderTargetContext(
-            rt, origin, grColorType, std::move(colorSpace), props, relProc, releaseContext);
+    auto rtc = GrRenderTargetContext::MakeFromBackendRenderTarget(
+            context, grColorType, std::move(colorSpace), rt, origin, props, relProc,
+            releaseContext);
     if (!rtc) {
         return nullptr;
     }
@@ -657,8 +652,8 @@ sk_sp<SkSurface> SkSurface::MakeFromBackendTextureAsRenderTarget(GrContext* cont
         return nullptr;
     }
 
-    auto rtc = context->priv().makeBackendTextureAsRenderTargetRenderTargetContext(
-            tex, origin, sampleCnt, grColorType, std::move(colorSpace), props);
+    auto rtc = GrRenderTargetContext::MakeFromBackendTextureAsRenderTarget(
+            context, grColorType, std::move(colorSpace), tex, sampleCnt, origin, props);
     if (!rtc) {
         return nullptr;
     }

@@ -197,7 +197,7 @@ protected:
         GrMipMapped mipMapped = willBeMipped ? GrMipMapped::kYes : GrMipMapped::kNo;
 
         return GrSurfaceProxy::Copy(
-                fCtx.get(), fProxy.get(), mipMapped,
+                fCtx.get(), fProxy.get(), SkColorTypeToGrColorType(info.colorType()), mipMapped,
                 SkIRect::MakeXYWH(origin.x(), origin.y(), info.width(), info.height()),
                 SkBackingFit::kExact, SkBudgeted::kYes);
     }
@@ -268,7 +268,7 @@ protected:
 
     static void draw_as_tex(SkCanvas* canvas, SkImage* image, SkScalar x, SkScalar y) {
         sk_sp<GrTextureProxy> proxy(as_IB(image)->asTextureProxyRef(
-                canvas->getGrContext(), GrSamplerState::ClampBilerp(), nullptr));
+                canvas->getGrContext(), GrSamplerState::Filter::kBilerp, nullptr));
         if (!proxy) {
             // show placeholder if we have no texture
             SkPaint paint;

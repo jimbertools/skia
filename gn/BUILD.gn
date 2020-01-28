@@ -124,8 +124,7 @@ config("default") {
     ]
   } else {
     cflags += [
-      "-fstrict-aliasing",
-      "-fPIC",
+      "-fstrict-aliasing"
     ]
     cflags_cc += [ "-std=c++17" ]
 

@@ -90,7 +90,7 @@ public:
     PreScaleMatrix44Bench()
         : INHERITED("prescale")
     {
-        fX = fY = fZ = SkDoubleToMScalar(1.5);
+        fX = fY = fZ = 1.5f;
     }
 protected:
     void performTest() override {
@@ -101,7 +101,7 @@ protected:
     }
 private:
     SkMatrix44 fM0;
-    SkMScalar  fX, fY, fZ;
+    SkScalar   fX, fY, fZ;
     typedef Matrix44Bench INHERITED;
 };
 
@@ -218,7 +218,7 @@ public:
     PostScaleMatrix44Bench()
         : INHERITED("postscale")
     {
-        fX = fY = fZ = SkDoubleToMScalar(1.5);
+        fX = fY = fZ = 1.5f;
     }
 protected:
     void performTest() override {
@@ -229,7 +229,7 @@ protected:
     }
 private:
     SkMatrix44 fM0;
-    SkMScalar  fX, fY, fZ;
+    SkScalar   fX, fY, fZ;
     typedef Matrix44Bench INHERITED;
 };
 
@@ -240,7 +240,7 @@ public:
         : INHERITED(fastPath ? "setconcat_fast" : "setconcat_general")
 {
         if (fastPath) {
-            const SkMScalar v = SkDoubleToMScalar(1.5);
+            const SkScalar v = 1.5f;
             fM1.setScale(v,v,v);
             fM2.setTranslate(v,v,v);
         } else {
@@ -397,3 +397,36 @@ DEF_BENCH( return new M4EQ(); )
 DEF_BENCH( return new M4NEQ(); )
 DEF_BENCH( return new M4Concat(); )
 DEF_BENCH( return new M4SetConcat(); )
+
+class M4_map4 : public M4Bench {
+public:
+    M4_map4() : INHERITED("map4") {}
+protected:
+    void performTest() override {
+        SkV4 v = {1, 2, 3, 4};
+        for (int i = 0; i < 100000; ++i) {
+            fV = fM0 * v;
+        }
+    }
+private:
+    SkV4 fV;
+    typedef M4Bench INHERITED;
+};
+DEF_BENCH( return new M4_map4(); )
+
+class M4_map2 : public M4Bench {
+public:
+    M4_map2() : INHERITED("map2") {}
+protected:
+    void performTest() override {
+        SkMatrix m;
+        m.setRotate(1);
+        for (int i = 0; i < 100000; ++i) {
+            fV = m.mapXY(5, 6);
+        }
+    }
+private:
+    SkPoint fV;
+    typedef M4Bench INHERITED;
+};
+DEF_BENCH( return new M4_map2(); )

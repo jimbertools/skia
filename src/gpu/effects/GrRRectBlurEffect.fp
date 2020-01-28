@@ -52,11 +52,8 @@ uniform half blurRadius;
         sk_sp<GrTextureProxy> mask(proxyProvider->findOrCreateProxyByUniqueKey(
                 key, GrColorType::kAlpha_8, kBottomLeft_GrSurfaceOrigin));
         if (!mask) {
-            // TODO: this could be SkBackingFit::kApprox, but:
-            //   1) The texture coords would need to be updated.
-            //   2) We would have to use GrTextureDomain::kClamp_Mode for the GaussianBlur.
             auto rtc = GrRenderTargetContext::MakeWithFallback(
-                    context, GrColorType::kAlpha_8, nullptr, SkBackingFit::kExact, dimensions);
+                    context, GrColorType::kAlpha_8, nullptr, SkBackingFit::kApprox, dimensions);
             if (!rtc) {
                 return nullptr;
             }
@@ -77,13 +74,12 @@ uniform half blurRadius;
                                                    std::move(srcProxy),
                                                    rtc->colorInfo().colorType(),
                                                    rtc->colorInfo().alphaType(),
-                                                   SkIPoint::Make(0, 0),
                                                    nullptr,
                                                    SkIRect::MakeSize(dimensions),
-                                                   SkIRect::MakeEmpty(),
+                                                   SkIRect::MakeSize(dimensions),
                                                    xformedSigma,
                                                    xformedSigma,
-                                                   GrTextureDomain::kIgnore_Mode,
+                                                   SkTileMode::kClamp,
                                                    SkBackingFit::kExact);
             if (!rtc2) {
                 return nullptr;
