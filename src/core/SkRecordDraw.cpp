@@ -28,7 +28,7 @@ void SkRecordDraw(const SkRecord& record,
         SkRect query = canvas->getLocalClipBounds();
 
         SkTDArray<int> ops;
-        bbh->search(query, &ops);
+        static_cast<const SkBBoxHierarchy_Base*>(bbh)->search(query, &ops);
 
         SkRecords::Draw draw(canvas, drawablePicts, drawables, drawableCount);
         for (int i = 0; i < ops.count(); i++) {
@@ -93,7 +93,7 @@ template <> void Draw::draw(const DrawBehind& r) {
 }
 
 DRAW(SetMatrix, setMatrix(SkMatrix::Concat(fInitialCTM, r.matrix)));
-DRAW(Concat44, experimental_concat44(r.matrix.asColMajor()));
+DRAW(Concat44, experimental_concat44(r.matrix));
 DRAW(Concat, concat(r.matrix));
 DRAW(Translate, translate(r.dx, r.dy));
 DRAW(Scale, scale(r.sx, r.sy));

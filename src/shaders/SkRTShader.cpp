@@ -14,8 +14,11 @@
 #include "src/shaders/SkRTShader.h"
 
 #include "src/sksl/SkSLByteCode.h"
+#include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/SkSLInterpreter.h"
 
 #if SK_SUPPORT_GPU
+#include "src/gpu/GrColorInfo.h"
 #include "src/gpu/GrFPArgs.h"
 #include "src/gpu/effects/GrSkSLFP.h"
 #endif
@@ -44,17 +47,19 @@ bool SkRTShader::onAppendStages(const SkStageRec& rec) const {
     ctx->ninputs = fEffect->uniformSize() / 4;
     ctx->shaderConvention = true;
 
-    SkAutoMutexExclusive ama(fByteCodeMutex);
-    if (!fByteCode) {
+    SkAutoMutexExclusive ama(fInterpreterMutex);
+    if (!fInterpreter) {
         auto [byteCode, errorText] = fEffect->toByteCode(fInputs->data());
         if (!byteCode) {
             SkDebugf("%s\n", errorText.c_str());
             return false;
         }
-        fByteCode = std::move(byteCode);
+        fMain = byteCode->getFunction("main");
+        fInterpreter.reset(new SkSL::Interpreter<SkRasterPipeline_InterpreterCtx::VECTOR_WIDTH>(
+                                                                      std::move(byteCode)));
     }
-    ctx->byteCode = fByteCode.get();
-    ctx->fn = ctx->byteCode->getFunction("main");
+    ctx->fn = fMain;
+    ctx->interpreter = fInterpreter.get();
 
     rec.fPipeline->append(SkRasterPipeline::seed_shader);
     rec.fPipeline->append_matrix(rec.fAlloc, inverse);
@@ -135,6 +140,10 @@ std::unique_ptr<GrFragmentProcessor> SkRTShader::asFragmentProcessor(const GrFPA
         }
         fp->addChild(std::move(childFP));
     }
-    return fp;
+    if (GrColorTypeClampType(args.fDstColorInfo->colorType()) != GrClampType::kNone) {
+        return GrFragmentProcessor::ClampPremulOutput(std::move(fp));
+    } else {
+        return fp;
+    }
 }
 #endif

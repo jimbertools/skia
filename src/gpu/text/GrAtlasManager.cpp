@@ -22,20 +22,6 @@ GrAtlasManager::GrAtlasManager(GrProxyProvider* proxyProvider, GrStrikeCache* gl
 
 GrAtlasManager::~GrAtlasManager() = default;
 
-static GrColorType mask_format_to_gr_color_type(GrMaskFormat format) {
-    switch (format) {
-        case kA8_GrMaskFormat:
-            return GrColorType::kAlpha_8;
-        case kA565_GrMaskFormat:
-            return GrColorType::kBGR_565;
-        case kARGB_GrMaskFormat:
-            return GrColorType::kRGBA_8888;
-        default:
-            SkDEBUGFAIL("unsupported GrMaskFormat");
-            return GrColorType::kAlpha_8;
-    }
-}
-
 void GrAtlasManager::freeAll() {
     for (int i = 0; i < kMaskFormatCount; ++i) {
         fAtlases[i] = nullptr;
@@ -44,27 +30,27 @@ void GrAtlasManager::freeAll() {
 
 bool GrAtlasManager::hasGlyph(GrGlyph* glyph) {
     SkASSERT(glyph);
-    return this->getAtlas(glyph->fMaskFormat)->hasID(glyph->fID);
+    return this->getAtlas(glyph->fMaskFormat)->hasID(glyph->fPlotLocator);
 }
 
 // add to texture atlas that matches this format
 GrDrawOpAtlas::ErrorCode GrAtlasManager::addToAtlas(
                                 GrResourceProvider* resourceProvider,
                                 GrStrikeCache* glyphCache,
-                                GrTextStrike* strike, GrDrawOpAtlas::AtlasID* id,
+                                GrTextStrike* strike, GrDrawOpAtlas::PlotLocator* plotLocator,
                                 GrDeferredUploadTarget* target, GrMaskFormat format,
                                 int width, int height, const void* image, SkIPoint16* loc) {
     glyphCache->setStrikeToPreserve(strike);
-    return this->getAtlas(format)->addToAtlas(resourceProvider, id, target, width, height,
-                                              image, loc);
+    return this->getAtlas(format)->addToAtlas(
+            resourceProvider, plotLocator, target, width, height, image, loc);
 }
 
 void GrAtlasManager::addGlyphToBulkAndSetUseToken(GrDrawOpAtlas::BulkUseTokenUpdater* updater,
                                                   GrGlyph* glyph,
                                                   GrDeferredUploadToken token) {
     SkASSERT(glyph);
-    if (updater->add(glyph->fID)) {
-        this->getAtlas(glyph->fMaskFormat)->setLastUseToken(glyph->fID, token);
+    if (updater->add(glyph->fPlotLocator)) {
+        this->getAtlas(glyph->fMaskFormat)->setLastUseToken(glyph->fPlotLocator, token);
     }
 }
 
@@ -141,7 +127,7 @@ void GrAtlasManager::dump(GrContext* context) const {
 #else
                 filename.printf("fontcache_%d%d%d.png", gDumpCount, i, pageIdx);
 #endif
-                auto ct = mask_format_to_gr_color_type(AtlasIndexToMaskFormat(i));
+                auto ct = GrMaskFormatToColorType(AtlasIndexToMaskFormat(i));
                 save_pixels(context, views[pageIdx], ct, filename.c_str());
             }
         }
@@ -164,7 +150,7 @@ void GrAtlasManager::setAtlasDimensionsToMinimum_ForTesting() {
 bool GrAtlasManager::initAtlas(GrMaskFormat format) {
     int index = MaskFormatToAtlasIndex(format);
     if (fAtlases[index] == nullptr) {
-        GrColorType grColorType = mask_format_to_gr_color_type(format);
+        GrColorType grColorType = GrMaskFormatToColorType(format);
         SkISize atlasDimensions = fAtlasConfig.atlasDimensions(format);
         SkISize plotDimensions = fAtlasConfig.plotDimensions(format);
 
@@ -175,7 +161,7 @@ bool GrAtlasManager::initAtlas(GrMaskFormat format) {
                 fProxyProvider, format, grColorType,
                 atlasDimensions.width(), atlasDimensions.height(),
                 plotDimensions.width(), plotDimensions.height(),
-                fAllowMultitexturing, &GrStrikeCache::HandleEviction, fGlyphCache);
+                fAllowMultitexturing, fGlyphCache);
         if (!fAtlases[index]) {
             return false;
         }

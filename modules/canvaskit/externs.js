@@ -798,6 +798,7 @@ CanvasKit.SkPicture.prototype.saveAsFile = function() {};
 CanvasKit.SkSurface.prototype.dispose = function() {};
 CanvasKit.SkSurface.prototype.flush = function() {};
 CanvasKit.SkSurface.prototype.requestAnimationFrame = function() {};
+CanvasKit.SkSurface.prototype.drawOnce = function() {};
 CanvasKit.SkSurface.prototype.captureFrameAsSkPicture = function() {};
 
 CanvasKit.SkCodec.prototype.readPixels = function() {};

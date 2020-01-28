@@ -108,8 +108,6 @@ public:
         return result;
     }
 
-    GrPixelConfig config() const { return fConfig; }
-
     SkISize dimensions() const {
         SkASSERT(!this->isFullyLazy());
         return fDimensions;
@@ -247,6 +245,9 @@ public:
      * assignment in GrResourceAllocator.
      */
     bool readOnly() const { return fSurfaceFlags & GrInternalSurfaceFlags::kReadOnly; }
+    bool framebufferOnly() const {
+        return fSurfaceFlags & GrInternalSurfaceFlags::kFramebufferOnly;
+    }
 
     /**
      * This means surface is a multisampled render target, and internally holds a non-msaa texture
@@ -353,7 +354,7 @@ protected:
     bool ignoredByResourceAllocator() const { return fIgnoredByResourceAllocator; }
     void setIgnoredByResourceAllocator() { fIgnoredByResourceAllocator = true; }
 
-    void computeScratchKey(GrScratchKey*) const;
+    void computeScratchKey(const GrCaps&, GrScratchKey*) const;
 
     virtual sk_sp<GrSurface> createSurface(GrResourceProvider*) const = 0;
     void assign(sk_sp<GrSurface> surface);
@@ -387,10 +388,9 @@ protected:
     GrInternalSurfaceFlags fSurfaceFlags;
 
 private:
-    // For wrapped resources, 'fFormat', 'fConfig', 'fWidth', 'fHeight', and 'fOrigin; will always
+    // For wrapped resources, 'fFormat', 'fWidth', 'fHeight', and 'fOrigin; will always
     // be filled in from the wrapped resource.
     const GrBackendFormat  fFormat;
-    const GrPixelConfig    fConfig;
     SkISize                fDimensions;
     const GrSurfaceOrigin  fOrigin;
     const GrSwizzle        fTextureSwizzle;
