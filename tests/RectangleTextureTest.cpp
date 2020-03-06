@@ -32,12 +32,15 @@ static void test_basic_draw_as_src(skiatest::Reporter* reporter, GrContext* cont
                                    SkAlphaType alphaType, uint32_t expectedPixelValues[]) {
     auto rtContext = GrRenderTargetContext::Make(
             context, colorType, nullptr, SkBackingFit::kExact, rectProxy->dimensions());
+    GrSurfaceOrigin origin = rectProxy->origin();
+    GrSwizzle swizzle = rectProxy->textureSwizzle();
+    GrSurfaceProxyView view(std::move(rectProxy), origin, swizzle);
     for (auto filter : {GrSamplerState::Filter::kNearest,
                         GrSamplerState::Filter::kBilerp,
                         GrSamplerState::Filter::kMipMap}) {
         rtContext->clear(nullptr, SkPMColor4f::FromBytes_RGBA(0xDDCCBBAA),
                          GrRenderTargetContext::CanClearFullscreen::kYes);
-        auto fp = GrTextureEffect::Make(rectProxy, alphaType, SkMatrix::I(), filter);
+        auto fp = GrTextureEffect::Make(view, alphaType, SkMatrix::I(), filter);
         GrPaint paint;
         paint.setPorterDuffXPFactory(SkBlendMode::kSrc);
         paint.addColorFragmentProcessor(std::move(fp));
@@ -189,8 +192,8 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(RectangleTexture, reporter, ctxInfo) {
                                kPremul_SkAlphaType, refPixels);
 
         // Test copy to both a texture and RT
-        TestCopyFromSurface(reporter, context, rectProxy.get(), GrColorType::kRGBA_8888, refPixels,
-                            "RectangleTexture-copy-from");
+        TestCopyFromSurface(reporter, context, rectProxy.get(), origin, GrColorType::kRGBA_8888,
+                            refPixels, "RectangleTexture-copy-from");
 
         GrSwizzle swizzle = context->priv().caps()->getReadSwizzle(rectangleTex.getBackendFormat(),
                                                                    GrColorType::kRGBA_8888);

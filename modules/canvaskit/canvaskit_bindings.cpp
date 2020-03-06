@@ -57,6 +57,7 @@
 #include "src/core/SkFontMgrPriv.h"
 #include "src/core/SkResourceCache.h"
 #include "src/sksl/SkSLCompiler.h"
+#include "include/core/JContainer.h"
 
 #include <iostream>
 #include <string>
@@ -757,7 +758,9 @@ EMSCRIPTEN_BINDINGS(Skia) {
     function("getSkImageInfo", optional_override([](SimpleImageInfo ii)->SkImageInfo {
         return toSkImageInfo(ii);
      }));
+    // Deprecated: use Canvaskit.SkPathEffect.MakeCorner
     function("MakeSkCornerPathEffect", &SkCornerPathEffect::Make, allow_raw_pointers());
+    // Deprecated: use Canvaskit.SkPathEffect.MakeDiscrete
     function("MakeSkDiscretePathEffect", &SkDiscretePathEffect::Make, allow_raw_pointers());
     // Deprecated: use Canvaskit.SkMaskFilter.MakeBlur
     function("MakeBlurMaskFilter", optional_override([](SkBlurStyle style, SkScalar sigma, bool respectCTM)->sk_sp<SkMaskFilter> {
@@ -900,6 +903,25 @@ EMSCRIPTEN_BINDINGS(Skia) {
             self.setResourceCacheLimits(maxResources, maxResourceBytes);
         }));
 #endif
+
+    class_<std::shared_ptr<JContainer>>("std::shared_ptr<JContainer>");
+
+    class_<JContainer>("JContainer")
+    .constructor<int, sk_sp<GrContext>>()
+    .function("ref", &JContainer::ref)
+    .function("resize", &JContainer::resize)
+    .function("setX", &JContainer::setX)
+    .function("setY", &JContainer::setY)
+    .function("x", &JContainer::x)
+    .function("y", &JContainer::y)
+    .function("setParent", &JContainer::setParent)
+    .function("getLayerId", &JContainer::getLayerId)
+    .function("getSurface", &JContainer::getSurface)
+    .function("removeFromParent", &JContainer::removeFromParent)
+    .function("removeAllChildren", &JContainer::removeAllChildren)
+    .function("addChild", &JContainer::addChild)
+    .function("removeChild", &JContainer::removeChild)
+    .function("draw", &JContainer::draw);
 
     class_<GrBackendTexture>("GrBackendTexture");
 
@@ -1330,7 +1352,9 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("setStyle", &SkPaint::setStyle);
 
     class_<SkPathEffect>("SkPathEffect")
-        .smart_ptr<sk_sp<SkPathEffect>>("sk_sp<SkPathEffect>");
+        .smart_ptr<sk_sp<SkPathEffect>>("sk_sp<SkPathEffect>")
+        .class_function("MakeCorner", &SkCornerPathEffect::Make)
+        .class_function("MakeDiscrete", &SkDiscretePathEffect::Make);
 
     class_<SkPath>("SkPath")
         .constructor<>()

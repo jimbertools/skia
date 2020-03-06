@@ -82,6 +82,20 @@ public:
     };
 
     /**
+     * Keep track of generation number for Atlases and Plots.
+     */
+    class GenerationCounter {
+    public:
+        static constexpr uint64_t kInvalidGeneration = 0;
+        uint64_t next() {
+            return fGeneration++;
+        }
+
+    private:
+        uint64_t fGeneration{1};
+    };
+
+    /**
      * Returns a GrDrawOpAtlas. This function can be called anywhere, but the returned atlas
      * should only be used inside of GrMeshDrawOp::onPrepareDraws.
      *  @param GrColorType      The colorType which this atlas will store
@@ -91,6 +105,7 @@ public:
      *                          direction
      *  @param numPlotsY        The number of plots the atlas should be broken up into in the Y
      *                          direction
+     *  @param atlasGeneration  a pointer to the context's generation counter.
      *  @param allowMultitexturing Can the atlas use more than one texture.
      *  @param evictor          A pointer to an eviction callback class.
      *
@@ -101,8 +116,27 @@ public:
                                                GrColorType,
                                                int width, int height,
                                                int plotWidth, int plotHeight,
+                                               GenerationCounter* generationCounter,
                                                AllowMultitexturing allowMultitexturing,
                                                EvictionCallback* evictor);
+
+    /**
+     * Packs a texture atlas page index into the uint16 texture coordinates.
+     *  @param u      U texture coordinate
+     *  @param v      V texture coordinate
+     *  @param pageIndex   index of the texture these coordinates apply to.
+                           Must be in the range [0, 3].
+     *  @return    The new u and v coordinates with the packed value
+     */
+    static std::pair<uint16_t, uint16_t> PackIndexInTexCoords(uint16_t u, uint16_t v,
+                                                              int pageIndex);
+    /**
+     * Unpacks a texture atlas page index from uint16 texture coordinates.
+     *  @param u      Packed U texture coordinate
+     *  @param v      Packed V texture coordinate
+     *  @return    The unpacked u and v coordinates with the page index.
+     */
+    static std::tuple<uint16_t, uint16_t, int> UnpackIndexFromTexCoords(uint16_t u, uint16_t v);
 
     /**
      * Adds a width x height subimage to the atlas. Upon success it returns 'kSucceeded' and returns
@@ -140,10 +174,10 @@ public:
         }
 
         uint32_t plot = GetPlotIndexFromID(plotLocator);
-        SkASSERT(plot < fNumPlots);
         uint32_t page = GetPageIndexFromID(plotLocator);
-        SkASSERT(page < fNumActivePages);
-        return fPages[page].fPlotArray[plot]->genID() == GetGenerationFromID(plotLocator);
+        uint64_t plotGeneration = fPages[page].fPlotArray[plot]->genID();
+        uint64_t locatorGeneration = GetGenerationFromID(plotLocator);
+        return plot < fNumPlots && page < fNumActivePages && plotGeneration == locatorGeneration;
     }
 
     /** To ensure the atlas does not evict a given entry, the client must set the last use token. */
@@ -247,7 +281,7 @@ public:
 
 private:
     GrDrawOpAtlas(GrProxyProvider*, const GrBackendFormat& format, GrColorType, int width,
-                  int height, int plotWidth, int plotHeight,
+                  int height, int plotWidth, int plotHeight, GenerationCounter* generationCounter,
                   AllowMultitexturing allowMultitexturing);
 
     /**
@@ -296,8 +330,8 @@ private:
         void incFlushesSinceLastUsed() { fFlushesSinceLastUse++; }
 
     private:
-        Plot(int pageIndex, int plotIndex, uint64_t genID, int offX, int offY,
-             int width, int height, GrColorType colorType);
+        Plot(int pageIndex, int plotIndex, GenerationCounter* generationCounter,
+             int offX, int offY, int width, int height, GrColorType colorType);
 
         ~Plot() override;
 
@@ -306,8 +340,8 @@ private:
          * the atlas
          */
         Plot* clone() const {
-            return new Plot(fPageIndex, fPlotIndex, fGenID + 1, fX, fY, fWidth, fHeight,
-                            fColorType);
+            return new Plot(
+                fPageIndex, fPlotIndex, fGenerationCounter, fX, fY, fWidth, fHeight, fColorType);
         }
 
         static GrDrawOpAtlas::PlotLocator CreatePlotLocator(
@@ -328,6 +362,7 @@ private:
             const uint32_t fPageIndex : 16;
             const uint32_t fPlotIndex : 16;
         };
+        GenerationCounter* const fGenerationCounter;
         uint64_t fGenID;
         GrDrawOpAtlas::PlotLocator fPlotLocator;
         unsigned char* fData;
@@ -376,7 +411,7 @@ private:
                       GrDeferredUploadTarget* target, int width, int height, const void* image,
                       SkIPoint16* loc);
 
-    bool createPages(GrProxyProvider*);
+    bool createPages(GrProxyProvider*, GenerationCounter*);
     bool activateNewPage(GrResourceProvider*);
     void deactivateLastPage();
 
@@ -394,7 +429,9 @@ private:
     int                   fPlotHeight;
     unsigned int          fNumPlots;
 
-    uint64_t              fAtlasGeneration;
+    GenerationCounter* const fGenerationCounter;
+    uint64_t                 fAtlasGeneration;
+
     // nextTokenToFlush() value at the end of the previous flush
     GrDeferredUploadToken fPrevFlushToken;
 

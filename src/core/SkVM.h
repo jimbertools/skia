@@ -113,7 +113,7 @@ namespace skvm {
         enum { NEAREST, FLOOR, CEIL, TRUNC };  // vroundps immediates
 
         using DstEqOpX = void(Ymm dst, Ymm x);
-        DstEqOpX vmovdqa, vcvtdq2ps, vcvttps2dq, vcvtps2dq;
+        DstEqOpX vmovdqa, vcvtdq2ps, vcvttps2dq, vcvtps2dq, vsqrtps;
 
         void vpblendvb(Ymm dst, Ymm x, Ymm y, Ymm z);
 
@@ -296,6 +296,7 @@ namespace skvm {
         M(min_f32)                            \
         M(max_f32)                            \
         M(mad_f32)                            \
+        M(sqrt_f32)                           \
                    M(shl_i32) M(shl_i16x2)    \
                    M(shr_i32) M(shr_i16x2)    \
                    M(sra_i32) M(sra_i16x2)    \
@@ -424,13 +425,26 @@ namespace skvm {
         F32 min(F32 x, F32 y);
         F32 max(F32 x, F32 y);
         F32 mad(F32 x, F32 y, F32 z);  //  x*y+z, often an FMA
+        F32 sqrt(F32 x);
 
+        F32 negate(F32 x) {
+            return sub(splat(0.0f), x);
+        }
         F32 lerp(F32 lo, F32 hi, F32 t) {
             return mad(sub(hi,lo), t, lo);
         }
-
         F32 clamp(F32 x, F32 lo, F32 hi) {
             return max(lo, min(x, hi));
+        }
+        F32 abs(F32 x) {
+            return bit_cast(bit_and(bit_cast(x),
+                                    splat(0x7fffffff)));
+        }
+        F32 fract(F32 x) {
+            return sub(x, floor(x));
+        }
+        F32 norm(F32 x, F32 y) {
+            return sqrt(mad(x,x, mul(y,y)));
         }
 
         I32 eq (F32 x, F32 y);
@@ -444,15 +458,6 @@ namespace skvm {
         I32 trunc(F32 x);
         I32 round(F32 x);
         I32 bit_cast(F32 x) { return {x.id}; }
-
-        F32 abs(F32 x) {
-            return bit_cast(bit_and(bit_cast(x),
-                                    splat(0x7fffffff)));
-        }
-
-        F32 fract(F32 x) {
-            return sub(x, floor(x));
-        }
 
         // int math, comparisons, etc.
         I32 add(I32 x, I32 y);
@@ -528,8 +533,8 @@ namespace skvm {
         I32 pack   (I32 x, I32 y, int bits);   // x | (y << bits), assuming (x & (y << bits)) == 0
 
         // Common idioms used in several places, worth centralizing for consistency.
-        F32 unorm(int bits, I32);   // E.g. unorm(8, x) -> x * (1/255.0f)
-        I32 unorm(int bits, F32);   // E.g. unorm(8, f) -> round(x * 255)
+        F32 from_unorm(int bits, I32);   // E.g. from_unorm(8, x) -> x * (1/255.0f)
+        I32   to_unorm(int bits, F32);   // E.g.   to_unorm(8, x) -> round(x * 255)
 
         Color unpack_8888(I32 rgba);
         Color unpack_565 (I32 bgr );  // bottom 16 bits
@@ -570,29 +575,30 @@ namespace skvm {
 
     // Helper to streamline allocating and working with uniforms.
     struct Uniforms {
-        Arg              ptr;
+        Arg              base;
         std::vector<int> buf;
 
-        explicit Uniforms(int init) : ptr(Arg{0}), buf(init) {}
+        explicit Uniforms(int init) : base(Arg{0}), buf(init) {}
 
-        Builder::Uniform push(const int* vals, int n) {
-            int offset = sizeof(int)*buf.size();
-            buf.insert(buf.end(), vals, vals+n);
-            return {ptr, offset};
-        }
-        Builder::Uniform pushF(const float* vals, int n) {
-            return this->push((const int*)vals, n);
+        Builder::Uniform push(int val) {
+            buf.push_back(val);
+            return {base, (int)( sizeof(int)*(buf.size() - 1) )};
         }
 
-        Builder::Uniform push (int   val) { return this->push (&val, 1); }
-        Builder::Uniform pushF(float val) { return this->pushF(&val, 1); }
+        Builder::Uniform pushF(float val) {
+            int bits;
+            memcpy(&bits, &val, sizeof(int));
+            return this->push(bits);
+        }
 
         Builder::Uniform pushPtr(const void* ptr) {
-            union {
-                const void* ptr;
-                int   ints[sizeof(const void*) / sizeof(int)];
-            } pun = {ptr};
-            return this->push(pun.ints, SK_ARRAY_COUNT(pun.ints));
+            // Jam the pointer into 1 or 2 ints.
+            int ints[sizeof(ptr) / sizeof(int)];
+            memcpy(ints, &ptr, sizeof(ptr));
+            for (int bits : ints) {
+                buf.push_back(bits);
+            }
+            return {base, (int)( sizeof(int)*(buf.size() - SK_ARRAY_COUNT(ints)) )};
         }
     };
 

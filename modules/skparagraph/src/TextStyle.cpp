@@ -107,6 +107,7 @@ bool TextStyle::equalsByFonts(const TextStyle& that) const {
     return !fIsPlaceholder && !that.fIsPlaceholder &&
            fFontStyle == that.fFontStyle &&
            fFontFamilies == that.fFontFamilies &&
+           fFontFeatures == that.fFontFeatures &&
            SkScalarNearlyEqual(fLetterSpacing, that.fLetterSpacing) &&
            SkScalarNearlyEqual(fWordSpacing, that.fWordSpacing) &&
            SkScalarNearlyEqual(fHeight, that.fHeight) &&
@@ -183,7 +184,8 @@ bool PlaceholderStyle::equals(const PlaceholderStyle& other) const {
            SkScalarNearlyEqual(fHeight, other.fHeight) &&
            fAlignment == other.fAlignment &&
            fBaseline == other.fBaseline &&
-           SkScalarNearlyEqual(fBaselineOffset, other.fBaselineOffset);
+           (fAlignment != PlaceholderAlignment::kBaseline ||
+            SkScalarNearlyEqual(fBaselineOffset, other.fBaselineOffset));
 }
 
 }  // namespace textlayout

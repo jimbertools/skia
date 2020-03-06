@@ -15,6 +15,7 @@
 #include "include/private/SkTemplates.h"
 #include "include/private/SkTo.h"
 #include "src/core/SkAutoMalloc.h"
+#include "src/core/SkCompressedDataUtils.h"
 #include "src/core/SkConvertPixels.h"
 #include "src/core/SkMipMap.h"
 #include "src/core/SkTraceEvent.h"
@@ -1101,8 +1102,8 @@ bool GrGLGpu::uploadCompressedTexData(GrGLFormat format,
         size_t offset = 0;
         for (int level = 0; level < numMipLevels; ++level) {
 
-            size_t levelDataSize = GrCompressedDataSize(compressionType, dimensions,
-                                                        nullptr, GrMipMapped::kNo);
+            size_t levelDataSize = SkCompressedDataSize(compressionType, dimensions,
+                                                        nullptr, false);
 
             GL_CALL(CompressedTexSubImage2D(target,
                                             level,
@@ -1126,8 +1127,8 @@ bool GrGLGpu::uploadCompressedTexData(GrGLFormat format,
         size_t offset = 0;
 
         for (int level = 0; level < numMipLevels; ++level) {
-            size_t levelDataSize = GrCompressedDataSize(compressionType, dimensions,
-                                                        nullptr, GrMipMapped::kNo);
+            size_t levelDataSize = SkCompressedDataSize(compressionType, dimensions,
+                                                        nullptr, false);
 
             const char* rawLevelData = &((char*)data)[offset];
             GL_ALLOC_CALL(this->glInterface(), CompressedTexImage2D(target,
@@ -1464,7 +1465,8 @@ GrBackendTexture GrGLGpu::onCreateCompressedBackendTexture(SkISize dimensions,
         SkImage::CompressionType compression = GrGLFormatToCompressionType(glFormat);
         SkASSERT(compression != SkImage::CompressionType::kNone);
 
-        rawDataSize = GrCompressedDataSize(compression, dimensions, nullptr, mipMapped);
+        rawDataSize = SkCompressedDataSize(compression, dimensions, nullptr,
+                                           mipMapped == GrMipMapped::kYes);
 
         am.reset(rawDataSize);
 
@@ -1815,7 +1817,7 @@ void GrGLGpu::disableWindowRectangles() {
 
 bool GrGLGpu::flushGLState(GrRenderTarget* renderTarget, const GrProgramInfo& programInfo) {
 
-    sk_sp<GrGLProgram> program(fProgramCache->refProgram(this, renderTarget, programInfo));
+    sk_sp<GrGLProgram> program(fProgramCache->findOrCreateProgram(renderTarget, programInfo));
     if (!program) {
         GrCapsDebugf(this->caps(), "Failed to create program!\n");
         return false;
@@ -2118,9 +2120,12 @@ void GrGLGpu::clearStencilClip(const GrFixedClip& clip,
     this->handleDirtyContext();
 
     GrStencilAttachment* sb = target->renderTargetPriv().getStencilAttachment();
-    // this should only be called internally when we know we have a
-    // stencil buffer.
-    SkASSERT(sb);
+    if (!sb) {
+        // We should only get here if we marked a proxy as requiring a SB. However,
+        // the SB creation could later fail. Likely clipping is going to go awry now.
+        return;
+    }
+
     GrGLint stencilBitCount =  sb->bits();
 #if 0
     SkASSERT(stencilBitCount > 0);

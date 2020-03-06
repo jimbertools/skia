@@ -303,7 +303,7 @@ GrSemaphoresSubmitted GrContext::flush(const GrFlushInfo& info,
     if (this->abandoned()) {
         return GrSemaphoresSubmitted::kNo;
     }
-
+    
     return this->drawingManager()->flush(nullptr, 0, SkSurface::BackendSurfaceAccess::kNoAccess,
                                          info, externalRequests);
 }

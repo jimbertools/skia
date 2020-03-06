@@ -8,6 +8,7 @@
 #include "src/gpu/gl/GrGLCaps.h"
 
 #include "include/gpu/GrContextOptions.h"
+#include "src/core/SkCompressedDataUtils.h"
 #include "src/core/SkTSearch.h"
 #include "src/core/SkTSort.h"
 #include "src/gpu/GrProgramDesc.h"
@@ -3754,14 +3755,21 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
         fDriverBlacklistMSAACCPR = true;
     }
 
-    if (shaderCaps->fTessellationSupport && kNVIDIA_GrGLDriver == ctxInfo.driver()) {
+    // http://skbug.com/9739
+    bool isNVIDIAPascal =
+            kNVIDIA_GrGLDriver == ctxInfo.driver() &&
+            ctxInfo.hasExtension("GL_NV_conservative_raster_pre_snap_triangles") &&  // Pascal+.
+            !ctxInfo.hasExtension("GL_NV_conservative_raster_underestimation");  // Volta+.
+    if (isNVIDIAPascal && ctxInfo.driverVersion() < GR_GL_DRIVER_VER(440, 00, 0)) {
         if (GR_IS_GR_GL(ctxInfo.standard())) {
+            // glMemoryBarrier wasn't around until version 4.2.
             if (ctxInfo.version() >= GR_GL_VER(4,2)) {
                 fRequiresManualFBBarrierAfterTessellatedStencilDraw = true;
             } else {
                 shaderCaps->fTessellationSupport = false;
             }
         } else {
+            // glMemoryBarrier wasn't around until es version 3.1.
             if (ctxInfo.version() >= GR_GL_VER(3,1)) {
                 fRequiresManualFBBarrierAfterTessellatedStencilDraw = true;
             } else {
@@ -3984,7 +3992,7 @@ GrCaps::SupportedRead GrGLCaps::onSupportedReadPixelsColorType(
 
     SkImage::CompressionType compression = this->compressionType(srcBackendFormat);
     if (compression != SkImage::CompressionType::kNone) {
-        return { GrCompressionTypeIsOpaque(compression) ? GrColorType::kRGB_888x
+        return { SkCompressionTypeIsOpaque(compression) ? GrColorType::kRGB_888x
                                                         : GrColorType::kRGBA_8888,
                  offset_alignment_for_transfer_buffer(GR_GL_UNSIGNED_BYTE) };
     }
@@ -4224,7 +4232,7 @@ bool GrGLCaps::onAreColorTypeAndFormatCompatible(GrColorType ct,
 
     SkImage::CompressionType compression = GrGLFormatToCompressionType(glFormat);
     if (compression != SkImage::CompressionType::kNone) {
-        return ct == (GrCompressionTypeIsOpaque(compression) ? GrColorType::kRGB_888x
+        return ct == (SkCompressionTypeIsOpaque(compression) ? GrColorType::kRGB_888x
                                                              : GrColorType::kRGBA_8888);
     }
 

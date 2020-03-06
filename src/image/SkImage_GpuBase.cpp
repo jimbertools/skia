@@ -121,13 +121,14 @@ bool SkImage_GpuBase::getROPixels(SkBitmap* dst, CachingHint chint) const {
         }
     }
 
-    GrSurfaceProxyView view = this->asSurfaceProxyViewRef(direct);
+    const GrSurfaceProxyView* view = this->view(direct);
+    SkASSERT(view);
     GrColorType grColorType = SkColorTypeAndFormatToGrColorType(fContext->priv().caps(),
                                                                 this->colorType(),
-                                                                view.proxy()->backendFormat());
+                                                                view->proxy()->backendFormat());
 
-    auto sContext = GrSurfaceContext::Make(direct, std::move(view), grColorType,
-                                           this->alphaType(), this->refColorSpace());
+    auto sContext = GrSurfaceContext::Make(direct, *view, grColorType, this->alphaType(),
+                                           this->refColorSpace());
     if (!sContext) {
         return false;
     }
@@ -149,26 +150,22 @@ sk_sp<SkImage> SkImage_GpuBase::onMakeSubset(GrRecordingContext* context,
         return nullptr;
     }
 
-    sk_sp<GrSurfaceProxy> proxy = this->asTextureProxyRef(context);
+    const GrSurfaceProxyView* view = this->view(context);
+    SkASSERT(view && view->proxy());
 
     GrColorType grColorType = SkColorTypeToGrColorType(this->colorType());
 
-    sk_sp<GrTextureProxy> copyProxy =
-            GrSurfaceProxy::Copy(context, proxy.get(), grColorType, GrMipMapped::kNo, subset,
-                                 SkBackingFit::kExact, proxy->isBudgeted());
+    GrSurfaceProxyView copyView =
+            GrSurfaceProxy::Copy(context, view->proxy(), view->origin(), grColorType,
+                                 GrMipMapped::kNo, subset, SkBackingFit::kExact,
+                                 view->proxy()->isBudgeted());
 
-    if (!copyProxy) {
+    if (!copyView.proxy()) {
         return nullptr;
     }
 
-    const GrSurfaceProxyView& currView = this->getSurfaceProxyView(context);
-    if (!currView.proxy()) {
-        return nullptr;
-    }
-
-    GrSurfaceProxyView view(std::move(copyProxy), currView.origin(), currView.swizzle());
     // MDB: this call is okay bc we know 'sContext' was kExact
-    return sk_make_sp<SkImage_Gpu>(fContext, kNeedNewImageUniqueID, std::move(view),
+    return sk_make_sp<SkImage_Gpu>(fContext, kNeedNewImageUniqueID, std::move(copyView),
                                    this->colorType(), this->alphaType(), this->refColorSpace());
 }
 
@@ -184,13 +181,14 @@ bool SkImage_GpuBase::onReadPixels(const SkImageInfo& dstInfo, void* dstPixels, 
         return false;
     }
 
-    GrSurfaceProxyView view = this->asSurfaceProxyViewRef(direct);
+    const GrSurfaceProxyView* view = this->view(direct);
+    SkASSERT(view);
     GrColorType grColorType = SkColorTypeAndFormatToGrColorType(fContext->priv().caps(),
                                                                 this->colorType(),
-                                                                view.proxy()->backendFormat());
+                                                                view->proxy()->backendFormat());
 
-    auto sContext = GrSurfaceContext::Make(direct, std::move(view), grColorType,
-                                           this->alphaType(), this->refColorSpace());
+    auto sContext = GrSurfaceContext::Make(direct, *view, grColorType, this->alphaType(),
+                                           this->refColorSpace());
     if (!sContext) {
         return false;
     }
@@ -206,9 +204,9 @@ sk_sp<GrTextureProxy> SkImage_GpuBase::asTextureProxyRef(GrRecordingContext* con
         return nullptr;
     }
 
-    GrTextureAdjuster adjuster(fContext.get(), this->asTextureProxyRef(context),
-                               this->imageInfo().colorInfo(), this->uniqueID());
-    return adjuster.refTextureProxyForParams(params, scaleAdjust);
+    GrTextureAdjuster adjuster(fContext.get(), *this->view(context), this->imageInfo().colorInfo(),
+                               this->uniqueID());
+    return adjuster.viewForParams(params, scaleAdjust).asTextureProxyRef();
 }
 
 GrBackendTexture SkImage_GpuBase::onGetBackendTexture(bool flushPendingGrContextIO,
@@ -255,14 +253,14 @@ GrTexture* SkImage_GpuBase::onGetTexture() const {
         return nullptr;
     }
 
-    sk_sp<GrTextureProxy> proxyRef = this->asTextureProxyRef(direct);
-    SkASSERT(proxyRef && !proxyRef->isInstantiated());
+    sk_sp<GrTextureProxy> refProxy = this->asTextureProxyRef(direct);
+    SkASSERT(refProxy && !refProxy->isInstantiated());
 
-    if (!proxyRef->instantiate(direct->priv().resourceProvider())) {
+    if (!refProxy->instantiate(direct->priv().resourceProvider())) {
         return nullptr;
     }
 
-    return proxyRef->peekTexture();
+    return refProxy->peekTexture();
 }
 
 bool SkImage_GpuBase::onIsValid(GrContext* context) const {

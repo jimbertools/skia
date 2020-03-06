@@ -35,11 +35,7 @@ public:
     GrTextureProxy* peekProxy() const override;
     sk_sp<GrTextureProxy> asTextureProxyRef(GrRecordingContext*) const override;
 
-    GrSurfaceProxyView asSurfaceProxyViewRef(GrRecordingContext* context) const override;
-    const GrSurfaceProxyView& getSurfaceProxyView(GrRecordingContext* context) const override {
-        this->flattenToRGB(context);
-        return fRGBView;
-    }
+    const GrSurfaceProxyView* view(GrRecordingContext* context) const override;
 
     bool onIsTextureBacked() const override {
         SkASSERT(fProxies[0] || fRGBView.proxy());
@@ -55,8 +51,8 @@ public:
 
     bool setupMipmapsForPlanes(GrRecordingContext*) const;
 
-    // Returns a ref-ed texture proxy with miplevels
-    sk_sp<GrTextureProxy> asMippedTextureProxyRef(GrRecordingContext*) const;
+    // Returns a ref-ed texture proxy view with miplevels
+    GrSurfaceProxyView refMippedView(GrRecordingContext*) const;
 
 #if GR_TEST_UTILS
     bool testingOnly_IsFlattened() const {

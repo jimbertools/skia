@@ -9,12 +9,12 @@
 #define GrSurfaceContext_DEFINED
 
 #include "include/core/SkFilterQuality.h"
-#include "include/core/SkImageInfo.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSurface.h"
 #include "src/gpu/GrColorInfo.h"
 #include "src/gpu/GrDataUtils.h"
+#include "src/gpu/GrImageInfo.h"
 #include "src/gpu/GrSurfaceProxy.h"
 #include "src/gpu/GrSurfaceProxyView.h"
 
@@ -57,6 +57,8 @@ public:
     virtual ~GrSurfaceContext() = default;
 
     const GrColorInfo& colorInfo() const { return fColorInfo; }
+    GrImageInfo imageInfo() const { return {fColorInfo, fReadView.proxy()->dimensions()}; }
+
     GrSurfaceOrigin origin() const { return fReadView.origin(); }
     GrSwizzle readSwizzle() const { return fReadView.swizzle(); }
     // TODO: See if it makes sense for this to return a const& instead and require the callers to
@@ -95,7 +97,7 @@ public:
 
     GrSurfaceProxy* asSurfaceProxy() { return fReadView.proxy(); }
     const GrSurfaceProxy* asSurfaceProxy() const { return fReadView.proxy(); }
-    sk_sp<GrSurfaceProxy> asSurfaceProxyRef() { return fReadView.proxyRef(); }
+    sk_sp<GrSurfaceProxy> asSurfaceProxyRef() { return fReadView.refProxy(); }
 
     GrTextureProxy* asTextureProxy() { return fReadView.asTextureProxy(); }
     const GrTextureProxy* asTextureProxy() const { return fReadView.asTextureProxy(); }

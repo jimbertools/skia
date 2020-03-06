@@ -8,6 +8,7 @@ _src = get_path_info("../src", "abspath")
 _include = get_path_info("../include", "abspath")
 
 skia_core_public = [
+  "$_include/core/JContainer.h",
   "$_include/core/SkAnnotation.h",
   "$_include/core/SkBBHFactory.h",
   "$_include/core/SkBitmap.h",
@@ -98,6 +99,8 @@ skia_core_public = [
 ]
 
 skia_core_sources = [
+  "$_src/core/JContainer.cpp",
+
   "$_src/c/sk_imageinfo.cpp",
   "$_src/c/sk_paint.cpp",
   "$_src/c/sk_surface.cpp",
@@ -151,6 +154,8 @@ skia_core_sources = [
   "$_src/core/SkColorFilter_Matrix.h",
   "$_src/core/SkColorSpace.cpp",
   "$_src/core/SkColorSpaceXformSteps.cpp",
+  "$_src/core/SkCompressedDataUtils.h",
+  "$_src/core/SkCompressedDataUtils.cpp",
   "$_src/core/SkContourMeasure.cpp",
   "$_src/core/SkConvertPixels.cpp",
   "$_src/core/SkConvertPixels.h",

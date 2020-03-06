@@ -621,17 +621,19 @@ private:
         shapeData->fBounds.fRight /= scale;
         shapeData->fBounds.fBottom /= scale;
 
-        // We pack the 2bit page index in the low bit of the u and v texture coords
+        // Pack the page index into the u and v texture coords
         uint16_t pageIndex = GrDrawOpAtlas::GetPageIndexFromID(plotLocator);
-        SkASSERT(pageIndex < 4);
-        uint16_t uBit = (pageIndex >> 1) & 0x1;
-        uint16_t vBit = pageIndex & 0x1;
-        shapeData->fTextureCoords.set((atlasLocation.fX+SK_DistanceFieldPad) << 1 | uBit,
-                                      (atlasLocation.fY+SK_DistanceFieldPad) << 1 | vBit,
-                                      (atlasLocation.fX+SK_DistanceFieldPad+
-                                       devPathBounds.width()) << 1 | uBit,
-                                      (atlasLocation.fY+SK_DistanceFieldPad+
-                                       devPathBounds.height()) << 1 | vBit);
+        uint16_t left, top, right, bottom;
+        std::tie(left, top, right, bottom) =
+                std::make_tuple(atlasLocation.fX + SK_DistanceFieldPad,
+                                atlasLocation.fY + SK_DistanceFieldPad,
+                                atlasLocation.fX + SK_DistanceFieldPad + devPathBounds.width(),
+                                atlasLocation.fY + SK_DistanceFieldPad + devPathBounds.height());
+        std::tie(left, top) =
+                GrDrawOpAtlas::PackIndexInTexCoords(left, top, pageIndex);
+        std::tie(right, bottom) =
+                GrDrawOpAtlas::PackIndexInTexCoords(right, bottom, pageIndex);
+        shapeData->fTextureCoords.set(left, top, right, bottom);
 
         fShapeCache->add(shapeData);
         fShapeList->addToTail(shapeData);
@@ -719,14 +721,17 @@ private:
         shapeData->fBounds = SkRect::Make(devPathBounds);
         shapeData->fBounds.offset(-translateX, -translateY);
 
-        // We pack the 2bit page index in the low bit of the u and v texture coords
+        // Pack the page index into the u and v texture coords
         uint16_t pageIndex = GrDrawOpAtlas::GetPageIndexFromID(plotLocator);
-        SkASSERT(pageIndex < 4);
-        uint16_t uBit = (pageIndex >> 1) & 0x1;
-        uint16_t vBit = pageIndex & 0x1;
-        shapeData->fTextureCoords.set(atlasLocation.fX << 1 | uBit, atlasLocation.fY << 1 | vBit,
-                                      (atlasLocation.fX+width) << 1 | uBit,
-                                      (atlasLocation.fY+height) << 1 | vBit);
+        uint16_t left, top, right, bottom;
+        std::tie(left, top, right, bottom) = std::make_tuple(atlasLocation.fX, atlasLocation.fY,
+                                                             atlasLocation.fX+width,
+                                                             atlasLocation.fY+height);
+        std::tie(left, top) =
+                GrDrawOpAtlas::PackIndexInTexCoords(left, top, pageIndex);
+        std::tie(right, bottom) =
+                GrDrawOpAtlas::PackIndexInTexCoords(right, bottom, pageIndex);
+        shapeData->fTextureCoords.set(left, top, right, bottom);
 
         fShapeCache->add(shapeData);
         fShapeList->addToTail(shapeData);
@@ -890,8 +895,9 @@ bool GrSmallPathRenderer::onDrawPath(const DrawPathArgs& args) {
                                         kMaxAtlasTextureBytes);
         SkISize size = atlasConfig.atlasDimensions(kA8_GrMaskFormat);
         fAtlas = GrDrawOpAtlas::Make(args.fContext->priv().proxyProvider(), format,
-                                     GrColorType::kAlpha_8, size.width(), size.height(), kPlotWidth,
-                                     kPlotHeight, GrDrawOpAtlas::AllowMultitexturing::kYes, this);
+                                     GrColorType::kAlpha_8, size.width(), size.height(),
+                                     kPlotWidth, kPlotHeight, this,
+                                     GrDrawOpAtlas::AllowMultitexturing::kYes, this);
         if (!fAtlas) {
             return false;
         }
@@ -909,7 +915,8 @@ bool GrSmallPathRenderer::onDrawPath(const DrawPathArgs& args) {
 
 #if GR_TEST_UTILS
 
-struct GrSmallPathRenderer::PathTestStruct : public GrDrawOpAtlas::EvictionCallback {
+struct GrSmallPathRenderer::PathTestStruct : public GrDrawOpAtlas::EvictionCallback,
+                                             public GrDrawOpAtlas::GenerationCounter {
     PathTestStruct() : fContextID(SK_InvalidGenID), fAtlas(nullptr) {}
     ~PathTestStruct() override { this->reset(); }
 
@@ -979,6 +986,7 @@ GR_DRAW_OP_TEST_DEFINE(SmallPathOp) {
         gTestStruct.fAtlas =
                 GrDrawOpAtlas::Make(context->priv().proxyProvider(), format, GrColorType::kAlpha_8,
                                     size.width(), size.height(), kPlotWidth, kPlotHeight,
+                                    &gTestStruct,
                                     GrDrawOpAtlas::AllowMultitexturing::kYes, &gTestStruct);
     }
 

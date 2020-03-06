@@ -49,10 +49,6 @@ def dm_flags(api, bot):
         (config[0] == '~' and config[1:] in configs)):
       blacklisted.extend([config, src, options, name])
 
-  # We've been spending lots of time writing out and especially uploading
-  # .pdfs, but not doing anything further with them.  skia:6821
-  args.extend(['--dont_write', 'pdf'])
-
   # This enables non-deterministic random seeding of the GPU FP optimization
   # test.
   # Not Android due to:
@@ -107,11 +103,18 @@ def dm_flags(api, bot):
 
     if 'BonusConfigs' in bot:
       configs = [
-        'pdf',
         'g8', '565',
         'pic-8888', 'serialize-8888',
         'f16', 'srgb', 'esrgb', 'narrow', 'enarrow',
         'p3', 'ep3', 'rec2020', 'erec2020']
+
+    if 'PDF' in bot:
+      configs = [ 'pdf' ]
+      args.append('--rasterize_pdf')  # Works only on Mac.
+      # Take ~forever to rasterize:
+      blacklist('pdf gm _ lattice2')
+      blacklist('pdf gm _ hairmodes')
+      blacklist('pdf gm _ longpathdash')
 
   elif api.vars.builder_cfg.get('cpu_or_gpu') == 'GPU':
     args.append('--nocpu')
@@ -217,10 +220,6 @@ def dm_flags(api, bot):
 
     if 'CommandBuffer' in bot and 'MacBook10.1-' in bot:
       # skbug.com/9235
-      blacklist('_ test _ Programs')
-
-    if 'Metal' in bot and 'MacBook10.1-' in bot:
-      # skbug.com/9817
       blacklist('_ test _ Programs')
 
     # skbug.com/9033 - these devices run out of memory on this test
@@ -375,14 +374,14 @@ def dm_flags(api, bot):
     if arg in args:
       args.remove(arg)
 
-  if 'DDL' in bot:
-    # The DDL bots just render the large skps and the gms
+  if 'DDL' in bot or 'PDF' in bot:
+    # The DDL and PDF bots just render the large skps and the gms
     remove_from_args('tests')
     remove_from_args('image')
     remove_from_args('colorImage')
     remove_from_args('svg')
   else:
-    # Currently, only the DDL bots render skps
+    # No other bots render the .skps.
     remove_from_args('skp')
 
   if 'Lottie' in api.vars.builder_cfg.get('extra_config', ''):
@@ -555,6 +554,7 @@ def dm_flags(api, bot):
   bad_serialize_gms.append('readpixels')
   bad_serialize_gms.append('draw_image_set_rect_to_rect')
   bad_serialize_gms.append('compositor_quads_shader')
+  bad_serialize_gms.append('wacky_yuv_formats_qtr')
 
   # This GM forces a path to be convex. That property doesn't survive
   # serialization.
@@ -1042,6 +1042,7 @@ TEST_BUILDERS = [
   'Test-iOS-Clang-iPhone6-GPU-PowerVRGX6450-arm64-Release-All-Metal',
   ('Test-Mac10.13-Clang-MacBook10.1-GPU-IntelHD615-x86_64-Release-All'
    '-NativeFonts'),
+  'Test-Mac10.13-Clang-MacBookPro11.5-CPU-AVX2-x86_64-Debug-All-PDF',
   'Test-Mac10.13-Clang-MacBookPro11.5-CPU-AVX2-x86_64-Release-All',
   'Test-Mac10.13-Clang-MacBookPro11.5-GPU-RadeonHD8870M-x86_64-Debug-All-Metal',
   ('Test-Mac10.13-Clang-MacMini7.1-GPU-IntelIris5100-x86_64-Debug-All'
@@ -1070,7 +1071,6 @@ TEST_BUILDERS = [
   'Test-Win2019-Clang-GCE-CPU-AVX2-x86_64-Debug-All-FSAA',
   'Test-iOS-Clang-iPadPro-GPU-PowerVRGT7800-arm64-Release-All',
   'Test-Mac10.13-Clang-MacBook10.1-GPU-IntelHD615-x86_64-Debug-All-CommandBuffer',
-  'Test-Mac10.13-Clang-MacBook10.1-GPU-IntelHD615-x86_64-Release-All-Metal',
   'Test-Android-Clang-TecnoSpark3Pro-GPU-PowerVRGE8320-arm-Debug-All-Android',
 ]
 

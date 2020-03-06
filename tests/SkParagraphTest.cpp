@@ -1,10 +1,11 @@
 // Copyright 2019 Google LLC.
-#include "src/core/SkFontMgrPriv.h"
 #include <sstream>
+#include <thread>
 #include "modules/skparagraph/include/TypefaceFontProvider.h"
 #include "modules/skparagraph/src/ParagraphBuilderImpl.h"
 #include "modules/skparagraph/src/ParagraphImpl.h"
 #include "modules/skparagraph/utils/TestFontCollection.h"
+#include "src/core/SkFontMgrPriv.h"
 #include "src/core/SkOSFile.h"
 #include "src/utils/SkOSPath.h"
 #include "src/utils/SkShaperJSONWriter.h"
@@ -158,7 +159,6 @@ private:
 
 }  // namespace
 
-// Checked: NO DIFF
 DEF_TEST(SkParagraph_SimpleParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -942,7 +942,6 @@ DEF_TEST(SkParagraph_InlinePlaceholderGetRectsParagraph, reporter) {
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[2].rect.bottom(), 120, EPSILON100));
 }
 
-// Checked: NO DIFF
 DEF_TEST(SkParagraph_SimpleRedParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -1105,7 +1104,6 @@ DEF_TEST(SkParagraph_RainbowParagraph, reporter) {
     REPORTER_ASSERT(reporter, index == 5);
 }
 
-// Checked: NO DIFF
 DEF_TEST(SkParagraph_DefaultStyleParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -1145,7 +1143,6 @@ DEF_TEST(SkParagraph_DefaultStyleParagraph, reporter) {
     REPORTER_ASSERT(reporter, index == 1);
 }
 
-// Checked: NO DIFF
 DEF_TEST(SkParagraph_BoldParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -1192,7 +1189,6 @@ DEF_TEST(SkParagraph_BoldParagraph, reporter) {
     REPORTER_ASSERT(reporter, index == 1);
 }
 
-// Checked: NO DIFF (line height rounding error)
 DEF_TEST(SkParagraph_HeightOverrideParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -1248,7 +1244,6 @@ DEF_TEST(SkParagraph_HeightOverrideParagraph, reporter) {
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[1].rect.bottom(), 165.495f, EPSILON5));
 }
 
-// Checked: DIFF+
 DEF_TEST(SkParagraph_LeftAlignParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -1330,10 +1325,9 @@ DEF_TEST(SkParagraph_LeftAlignParagraph, reporter) {
     REPORTER_ASSERT(reporter, impl->getGlyphPositionAtCoordinate(1, 1).position == 0);
     REPORTER_ASSERT(reporter, impl->getGlyphPositionAtCoordinate(1, 35).position == 68);
     REPORTER_ASSERT(reporter, impl->getGlyphPositionAtCoordinate(1, 70).position == 134);
-    REPORTER_ASSERT(reporter, impl->getGlyphPositionAtCoordinate(2000, 35).position == 134);//
+    REPORTER_ASSERT(reporter, impl->getGlyphPositionAtCoordinate(2000, 35).position == 134);
 }
 
-// Checked: NO DIFF
 DEF_TEST(SkParagraph_RightAlignParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -1421,7 +1415,6 @@ DEF_TEST(SkParagraph_RightAlignParagraph, reporter) {
                     paragraph_style.getTextAlign() == impl->paragraphStyle().getTextAlign());
 }
 
-// Checked: NO DIFF
 DEF_TEST(SkParagraph_CenterAlignParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -1509,7 +1502,6 @@ DEF_TEST(SkParagraph_CenterAlignParagraph, reporter) {
                     paragraph_style.getTextAlign() == impl->paragraphStyle().getTextAlign());
 }
 
-// Checked: NO DIFF
 DEF_TEST(SkParagraph_JustifyAlignParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -1611,6 +1603,7 @@ DEF_TEST(SkParagraph_JustifyRTL, reporter) {
     ParagraphStyle paragraph_style;
     paragraph_style.setMaxLines(14);
     paragraph_style.setTextAlign(TextAlign::kJustify);
+    paragraph_style.setTextDirection(TextDirection::kRtl);
     paragraph_style.turnHintingOff();
     ParagraphBuilderImpl builder(paragraph_style, fontCollection);
 
@@ -1649,7 +1642,7 @@ DEF_TEST(SkParagraph_JustifyRTL, reporter) {
     RectWidthStyle rect_width_style = RectWidthStyle::kTight;
     auto boxes = paragraph->getRectsForRange(0, 100, rect_height_style, rect_width_style);
     canvas.drawRects(SK_ColorRED, boxes);
-    REPORTER_ASSERT(reporter, boxes.size() == 5);
+    REPORTER_ASSERT(reporter, boxes.size() == 3);
 
     boxes = paragraph->getRectsForRange(240, 250, rect_height_style, rect_width_style);
     canvas.drawRects(SK_ColorBLUE, boxes);
@@ -1779,7 +1772,6 @@ DEF_TEST_DISABLED(SkParagraph_LeadingSpaceRTL, reporter) {
     REPORTER_ASSERT(reporter, boxes.size() == 2ull);
 }
 
-// Checked: NO DIFF (some minor decoration differences, probably)
 DEF_TEST(SkParagraph_DecorationsParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -1903,7 +1895,6 @@ DEF_TEST(SkParagraph_WavyDecorationParagraph, reporter) {
     SkDebugf("TODO: Add test for wavy decorations\n");
 }
 
-// Checked: NO DIFF
 DEF_TEST(SkParagraph_ItalicsParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -1968,7 +1959,6 @@ DEF_TEST(SkParagraph_ItalicsParagraph, reporter) {
         });
 }
 
-// Checked: NO DIFF
 DEF_TEST(SkParagraph_ChineseParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -2017,7 +2007,7 @@ DEF_TEST(SkParagraph_ChineseParagraph, reporter) {
     REPORTER_ASSERT(reporter, impl->styles()[0].fStyle.equals(text_style));
 }
 
-// Checked: NO DIFF (disabled)
+// Checked: disabled for TxtLib
 DEF_TEST(SkParagraph_ArabicParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -2209,7 +2199,6 @@ DEF_TEST(SkParagraph_ArabicRectsLTRRightAlignParagraph, reporter) {
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.bottom(), 44, EPSILON100));
 }
 
-// Checked: NO DIFF
 DEF_TEST(SkParagraph_GetGlyphPositionAtCoordinateParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -2274,7 +2263,6 @@ DEF_TEST(SkParagraph_GetGlyphPositionAtCoordinateParagraph, reporter) {
     REPORTER_ASSERT(reporter, paragraph->getGlyphPositionAtCoordinate(85, 10000).position == 75);
 }
 
-// Checked: NO DIFF
 DEF_TEST(SkParagraph_GetRectsForRangeParagraph, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -2371,7 +2359,6 @@ DEF_TEST(SkParagraph_GetRectsForRangeParagraph, reporter) {
     }
 }
 
-// Checked: NO DIFF
 DEF_TEST(SkParagraph_GetRectsForRangeTight, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     if (!fontCollection->fontsFound()) return;
@@ -4066,7 +4053,7 @@ DEF_TEST(SkParagraph_StrutParagraph1, reporter) {
         canvas.drawRects(SK_ColorRED, boxes);
         REPORTER_ASSERT(reporter, boxes.size() == 1);
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.left(), 0, EPSILON100));
-        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 34.5f, EPSILON100));
+        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 0, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.right(), 50, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.bottom(), 95, EPSILON100));
     }
@@ -4084,7 +4071,7 @@ DEF_TEST(SkParagraph_StrutParagraph1, reporter) {
         canvas.drawRects(SK_ColorRED, boxes);
         REPORTER_ASSERT(reporter, boxes.size() == 1);
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.left(), 300, EPSILON100));
-        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 34.5f, EPSILON100));
+        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 0, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.right(), 500, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.bottom(), 95, EPSILON100));
     }
@@ -4093,7 +4080,7 @@ DEF_TEST(SkParagraph_StrutParagraph1, reporter) {
         canvas.drawRects(SK_ColorRED, boxes);
         REPORTER_ASSERT(reporter, boxes.size() == 1);
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.left(), 0, EPSILON100));
-        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 224.5f, EPSILON100));
+        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 190, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.right(), 100, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.bottom(), 285, EPSILON100));
     }
@@ -4102,7 +4089,7 @@ DEF_TEST(SkParagraph_StrutParagraph1, reporter) {
         canvas.drawRects(SK_ColorRED, boxes);
         REPORTER_ASSERT(reporter, boxes.size() == 1);
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.left(), 50, EPSILON100));
-        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 319.5f, EPSILON100));
+        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 285, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.right(), 300, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.bottom(), 380, EPSILON100));
     }
@@ -4173,7 +4160,7 @@ DEF_TEST(SkParagraph_StrutParagraph2, reporter) {
         canvas.drawRects(SK_ColorRED, boxes);
         REPORTER_ASSERT(reporter, boxes.size() == 1);
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.left(), 0, EPSILON100));
-        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 24, EPSILON100));
+        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 0, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.right(), 50, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.bottom(), 80, EPSILON100));
     }
@@ -4191,7 +4178,7 @@ DEF_TEST(SkParagraph_StrutParagraph2, reporter) {
         canvas.drawRects(SK_ColorRED, boxes);
         REPORTER_ASSERT(reporter, boxes.size() == 1);
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.left(), 300, EPSILON100));
-        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 24, EPSILON100));
+        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 0, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.right(), 500, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.bottom(), 80, EPSILON100));
     }
@@ -4200,7 +4187,7 @@ DEF_TEST(SkParagraph_StrutParagraph2, reporter) {
         canvas.drawRects(SK_ColorRED, boxes);
         REPORTER_ASSERT(reporter, boxes.size() == 1);
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.left(), 0, EPSILON100));
-        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 184, EPSILON100));
+        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 160, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.right(), 100, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.bottom(), 240, EPSILON100));
     }
@@ -4209,7 +4196,7 @@ DEF_TEST(SkParagraph_StrutParagraph2, reporter) {
         canvas.drawRects(SK_ColorRED, boxes);
         REPORTER_ASSERT(reporter, boxes.size() == 1);
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.left(), 50, EPSILON100));
-        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 264, EPSILON100));
+        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 240, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.right(), 300, EPSILON100));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.bottom(), 320, EPSILON100));
     }
@@ -4281,7 +4268,7 @@ DEF_TEST(SkParagraph_StrutParagraph3, reporter) {
         canvas.drawRects(SK_ColorRED, boxes);
         REPORTER_ASSERT(reporter, boxes.size() == 1);
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.left(), 0, epsilon));
-        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 8, epsilon));
+        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 0, epsilon));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.right(), 50, epsilon));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.bottom(), 60, epsilon));
     }
@@ -4299,7 +4286,7 @@ DEF_TEST(SkParagraph_StrutParagraph3, reporter) {
         canvas.drawRects(SK_ColorRED, boxes);
         REPORTER_ASSERT(reporter, boxes.size() == 1);
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.left(), 300, epsilon));
-        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 8, epsilon));
+        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 0, epsilon));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.right(), 500, epsilon));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.bottom(), 60, epsilon));
     }
@@ -4308,7 +4295,7 @@ DEF_TEST(SkParagraph_StrutParagraph3, reporter) {
         canvas.drawRects(SK_ColorRED, boxes);
         REPORTER_ASSERT(reporter, boxes.size() == 1);
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.left(), 0, epsilon));
-        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 128, epsilon));
+        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 120, epsilon));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.right(), 100, epsilon));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.bottom(), 180, epsilon));
     }
@@ -4317,7 +4304,7 @@ DEF_TEST(SkParagraph_StrutParagraph3, reporter) {
         canvas.drawRects(SK_ColorRED, boxes);
         REPORTER_ASSERT(reporter, boxes.size() == 1);
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.left(), 50, epsilon));
-        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 188, epsilon));
+        REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.top(), 180, epsilon));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.right(), 300, epsilon));
         REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes[0].rect.bottom(), 240, epsilon));
     }
@@ -4385,7 +4372,7 @@ DEF_TEST(SkParagraph_StrutForceParagraph, reporter) {
     canvas.drawRects(SK_ColorRED, boxes3);
     REPORTER_ASSERT(reporter, boxes3.size() == 1);
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes3[0].rect.left(), 0, EPSILON100));
-    REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes3[0].rect.top(), 22.5f, EPSILON100));
+    REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes3[0].rect.top(), 0, EPSILON100));
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes3[0].rect.right(), 50, EPSILON100));
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes3[0].rect.bottom(), 80, EPSILON100));
 
@@ -4401,7 +4388,7 @@ DEF_TEST(SkParagraph_StrutForceParagraph, reporter) {
     canvas.drawRects(SK_ColorRED, boxes5);
     REPORTER_ASSERT(reporter, boxes5.size() == 1);
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes5[0].rect.left(), 300, EPSILON100));
-    REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes5[0].rect.top(), 22.5f, EPSILON100));
+    REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes5[0].rect.top(), 0, EPSILON100));
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes5[0].rect.right(), 500, EPSILON100));
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes5[0].rect.bottom(), 80, EPSILON100));
 
@@ -4409,7 +4396,7 @@ DEF_TEST(SkParagraph_StrutForceParagraph, reporter) {
     canvas.drawRects(SK_ColorRED, boxes6);
     REPORTER_ASSERT(reporter, boxes6.size() == 1);
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes6[0].rect.left(), 0, EPSILON100));
-    REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes6[0].rect.top(), 182.5f, EPSILON100));
+    REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes6[0].rect.top(), 160, EPSILON100));
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes6[0].rect.right(), 100, EPSILON100));
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes6[0].rect.bottom(), 240, EPSILON100));
 
@@ -4417,7 +4404,7 @@ DEF_TEST(SkParagraph_StrutForceParagraph, reporter) {
     canvas.drawRects(SK_ColorRED, boxes7);
     REPORTER_ASSERT(reporter, boxes7.size() == 1);
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes7[0].rect.left(), 50, EPSILON100));
-    REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes7[0].rect.top(), 262.5f, EPSILON100));
+    REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes7[0].rect.top(), 240, EPSILON100));
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes7[0].rect.right(), 300, EPSILON100));
     REPORTER_ASSERT(reporter, SkScalarNearlyEqual(boxes7[0].rect.bottom(), 320, EPSILON100));
 }
@@ -4498,7 +4485,7 @@ DEF_TEST(SkParagraph_FontFeaturesParagraph, reporter) {
     ParagraphBuilderImpl builder(paragraph_style, fontCollection);
 
     TextStyle text_style;
-    text_style.setFontStyle(SkFontStyle::Italic());
+    text_style.setFontStyle(SkFontStyle::Italic()); // Regular Roboto doesn't have font features
     text_style.setFontFamilies({SkString("Roboto")});
     text_style.setColor(SK_ColorBLACK);
 
@@ -5205,3 +5192,34 @@ DEF_TEST(SkParagraph_Ellipsis, reporter) {
     relayout(3, false, 50, 30,  90, 950, SK_ColorBLUE);
     relayout(std::numeric_limits<size_t>::max(), false, 50, 200,  90, 950, SK_ColorGREEN);
 }
+
+DEF_TEST(SkParagraph_MemoryLeak, reporter) {
+    sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
+    if (!fontCollection->fontsFound()) return;
+    fontCollection->setDefaultFontManager(SkFontMgr::RefDefault());
+
+    std::string text;
+    for (size_t i = 0; i < 10; i++)
+	{
+		SkPaint paint;
+		paint.setAntiAlias(true);
+		paint.setColor(SK_ColorBLACK);
+
+		TextStyle textStyle;
+		textStyle.setForegroundColor(paint);
+		textStyle.setFontFamilies({ SkString("Roboto") });
+
+		ParagraphStyle paragraphStyle;
+		paragraphStyle.setTextStyle(textStyle);
+
+		ParagraphBuilderImpl builder(paragraphStyle, fontCollection);
+		text += "Text ";
+		builder.addText(text.c_str());
+
+		auto paragraph = builder.Build();
+		paragraph->layout(100);
+
+		//used to add a delay so I can monitor memory usage
+		//std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+	}
+};

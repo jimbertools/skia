@@ -13,6 +13,7 @@
 #include "src/gpu/GrRenderTargetProxy.h"
 #include "src/gpu/GrSurfaceProxy.h"
 #include "src/gpu/GrSwizzle.h"
+#include "src/gpu/GrTextureProxy.h"
 
 class GrSurfaceProxyView {
 public:
@@ -22,7 +23,7 @@ public:
             : fProxy(proxy), fOrigin(origin), fSwizzle(swizzle) {}
 
     // This entry point is used when we don't care about the origin or the swizzle.
-    GrSurfaceProxyView(sk_sp<GrSurfaceProxy> proxy)
+    explicit GrSurfaceProxyView(sk_sp<GrSurfaceProxy> proxy)
             : fProxy(proxy), fOrigin(kTopLeft_GrSurfaceOrigin) {}
 
     GrSurfaceProxyView(GrSurfaceProxyView&& view) = default;
@@ -38,7 +39,7 @@ public:
     bool operator!=(const GrSurfaceProxyView& other) const { return !(*this == other); }
 
     GrSurfaceProxy* proxy() const { return fProxy.get(); }
-    sk_sp<GrSurfaceProxy> proxyRef() const { return fProxy; }
+    sk_sp<GrSurfaceProxy> refProxy() const { return fProxy; }
 
     GrTextureProxy* asTextureProxy() const {
         if (!fProxy) {
@@ -68,7 +69,7 @@ public:
         *this = {};
     }
 
-    // This does not reset the origin or proxy, so the View can still be used to access those
+    // This does not reset the origin or swizzle, so the View can still be used to access those
     // properties associated with the detached proxy.
     sk_sp<GrSurfaceProxy> detachProxy() {
         return std::move(fProxy);

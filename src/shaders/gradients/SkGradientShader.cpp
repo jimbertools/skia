@@ -430,22 +430,27 @@ bool SkGradientShaderBase::onProgram(skvm::Builder* p,
     inv.postConcat(fPtsToUnit);
     inv.normalizePerspective();
 
-    // Having tacked on fPtsToUnit at the end means we'll be left with t in x.
     SkShaderBase::ApplyMatrix(p, inv, &x,&y,uniforms);
-    skvm::F32 t = x;
-    if (!this->transformT(p, &t)) {  // Hook into subclasses for linear, radial, etc.
-        return false;
-    }
 
-    // Most tiling happens here, with kDecal doing its work at the end.
-    // Perhaps unexpectedly, all clamping is handled by our search, so
-    // we don't explicitly clamp t to [0,1].  That clamp would break
-    // hard stops right at 0 or 1 boundaries in kClamp mode.
-    // (kRepeat and kMirror always produce values in [0,1].)
+    skvm::I32 mask = p->splat(~0);
+    skvm::F32 t = this->transformT(p,uniforms, x,y, &mask);
+
+    // Perhaps unexpectedly, clamping is handled naturally by our search, so we
+    // don't explicitly clamp t to [0,1].  That clamp would break hard stops
+    // right at 0 or 1 boundaries in kClamp mode.  (kRepeat and kMirror always
+    // produce values in [0,1].)
     switch(fTileMode) {
-        case SkTileMode::kDecal:  break;
-        case SkTileMode::kClamp:  break;
-        case SkTileMode::kRepeat: t = p->sub(t, p->floor(t)); break;
+        case SkTileMode::kClamp:
+            break;
+
+        case SkTileMode::kDecal:
+            mask = p->bit_and(mask, p->eq(t, p->clamp(t, p->splat(0.0f), p->splat(1.0f))));
+            break;
+
+        case SkTileMode::kRepeat:
+            t = p->sub(t, p->floor(t));
+            break;
+
         case SkTileMode::kMirror: {
             // t = | (t-1) - 2*(floor( (t-1)*0.5 )) - 1 |
             //       {-A-}      {--------B-------}
@@ -579,15 +584,10 @@ bool SkGradientShaderBase::onProgram(skvm::Builder* p,
         p->premul(r,g,b,*a);
     }
 
-    // Mask away any pixels that we tried to sample outside the bounds in kDecal.
-    if (fTileMode == SkTileMode::kDecal) {
-        skvm::I32 in_bounds = p->eq(t, p->clamp(t, p->splat(0.0f), p->splat(1.0f)));
-        *r = p->bit_cast(p->bit_and(in_bounds, p->bit_cast(*r)));
-        *g = p->bit_cast(p->bit_and(in_bounds, p->bit_cast(*g)));
-        *b = p->bit_cast(p->bit_and(in_bounds, p->bit_cast(*b)));
-        *a = p->bit_cast(p->bit_and(in_bounds, p->bit_cast(*a)));
-    }
-
+    *r = p->bit_cast(p->bit_and(mask, p->bit_cast(*r)));
+    *g = p->bit_cast(p->bit_and(mask, p->bit_cast(*g)));
+    *b = p->bit_cast(p->bit_and(mask, p->bit_cast(*b)));
+    *a = p->bit_cast(p->bit_and(mask, p->bit_cast(*a)));
     return true;
 }
 

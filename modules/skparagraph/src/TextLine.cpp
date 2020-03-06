@@ -96,6 +96,7 @@ TextLine::TextLine(ParagraphImpl* master,
     for (auto runIndex = start.runIndex(); runIndex <= end.runIndex(); ++runIndex) {
         auto& run = fMaster->run(runIndex);
         runLevels.emplace_back(run.fBidiLevel);
+        fMaxRunMetrics.add(InternalLineMetrics(run.fFontMetrics.fAscent, run.fFontMetrics.fDescent, run.fFontMetrics.fLeading));
     }
 
     std::vector<int32_t> logicalOrder(numRuns);
@@ -265,12 +266,9 @@ TextAlign TextLine::assumedTextAlign() const {
         return this->fMaster->paragraphStyle().effective_align();
     }
 
-    if (fClusterRange.empty()) {
-        return TextAlign::kLeft;
-    } else {
-        auto run = this->fMaster->cluster(fClusterRange.end - 1).run();
-        return run->leftToRight() ? TextAlign::kLeft : TextAlign::kRight;
-    }
+    return this->fMaster->paragraphStyle().getTextDirection() == TextDirection::kLtr
+                ? TextAlign::kLeft
+                : TextAlign::kRight;
 }
 
 void TextLine::scanStyles(StyleType styleType, const RunStyleVisitor& visitor) {
@@ -287,6 +285,12 @@ void TextLine::scanStyles(StyleType styleType, const RunStyleVisitor& visitor) {
                 });
             return true;
         });
+}
+
+SkRect TextLine::extendHeight(const ClipContext& context) const {
+    SkRect result = context.clip;
+    result.fBottom += SkTMax(this->fMaxRunMetrics.height() - this->height(), 0.0f);
+    return result;
 }
 
 void TextLine::paintText(SkCanvas* canvas, TextRange textRange, const TextStyle& style, const ClipContext& context) const {
@@ -308,7 +312,7 @@ void TextLine::paintText(SkCanvas* canvas, TextRange textRange, const TextStyle&
     context.run->copyTo(builder, SkToU32(context.pos), context.size, SkVector::Make(0, correctedBaseline));
     canvas->save();
     if (context.clippingNeeded) {
-        canvas->clipRect(context.clip);
+        canvas->clipRect(extendHeight(context));
     }
 
     canvas->translate(context.fTextShift, 0);
@@ -341,7 +345,7 @@ void TextLine::paintShadow(SkCanvas* canvas, TextRange textRange, const TextStyl
         SkRect clip = context.clip;
         clip.offset(shadow.fOffset);
         if (context.clippingNeeded) {
-            canvas->clipRect(clip);
+            canvas->clipRect(extendHeight(context));
         }
         canvas->translate(context.fTextShift, 0);
         canvas->drawTextBlob(builder.make(), shadow.fOffset.x(), shadow.fOffset.y(), paint);
@@ -356,7 +360,7 @@ void TextLine::paintDecorations(SkCanvas* canvas, TextRange textRange, const Tex
     }
 
     canvas->save();
-    //canvas->clipRect(context.clip);
+
 
     SkPaint paint;
     paint.setStyle(SkPaint::kStroke_Style);
@@ -848,6 +852,7 @@ void TextLine::iterateThroughVisualRuns(bool includingGhostSpaces, const RunVisi
     // Walk through all the runs that intersect with the line in visual order
     SkScalar width = 0;
     SkScalar runOffset = 0;
+    SkScalar totalWidth = 0;
     auto textRange = includingGhostSpaces ? this->textWithSpaces() : this->trimmedText();
     for (auto& runIndex : fRunsInVisualOrder) {
 
@@ -857,23 +862,37 @@ void TextLine::iterateThroughVisualRuns(bool includingGhostSpaces, const RunVisi
             // TODO: deal with empty runs in a better way
             continue;
         }
+        if (!run->leftToRight() && runOffset == 0 && includingGhostSpaces) {
+            // runOffset does not take in account a possibility
+            // that RTL run could start before the line (trailing spaces)
+            // so we need to do runOffset -= "trailing whitespaces length"
+            TextRange whitespaces = intersected(
+                    TextRange(fTextRange.end, fTextWithWhitespacesRange.end), run->fTextRange);
+            if (whitespaces.width() > 0) {
+                auto whitespacesLen = measureTextInsideOneRun(whitespaces, run, runOffset, 0, true, false).clip.width();
+                runOffset -= whitespacesLen;
+            }
+        }
         runOffset += width;
+        totalWidth += width;
         if (!visitor(run, runOffset, lineIntersection, &width)) {
             return;
         }
     }
 
     runOffset += width;
+    totalWidth += width;
+
     if (this->ellipsis() != nullptr) {
         if (visitor(ellipsis(), runOffset, ellipsis()->textRange(), &width)) {
-            runOffset += width;
+            totalWidth += width;
         }
     }
 
     // This is a very important assert!
     // It asserts that 2 different ways of calculation come with the same results
-    if (!includingGhostSpaces && compareRound(runOffset, this->width()) != 0) {
-        SkDebugf("ASSERT: %f != %f\n", runOffset, this->width());
+    if (!includingGhostSpaces && compareRound(totalWidth, this->width()) != 0) {
+        SkDebugf("ASSERT: %f != %f\n", totalWidth, this->width());
         SkASSERT(false);
     }
 }
