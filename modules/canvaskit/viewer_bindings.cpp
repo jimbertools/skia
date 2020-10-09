@@ -43,7 +43,7 @@ static sk_sp<Slide> MakeSvgSlide(std::string name, std::string svgText) {
                                                    /*copyData=*/true);
     return sk_make_sp<SvgSlide>(SkString(name.c_str()), std::move(stream));
 }
-
+#ifdef JIMB_BIND
 EMSCRIPTEN_BINDINGS(Viewer) {
     function("MakeSlide", &MakeSlide);
     function("MakeSkpSlide", &MakeSkpSlide);
@@ -71,3 +71,4 @@ EMSCRIPTEN_BINDINGS(Viewer) {
         .value("Command",       skui::ModifierKey::kCommand)
         .value("FirstPress",    skui::ModifierKey::kFirstPress);
 }
+#endif

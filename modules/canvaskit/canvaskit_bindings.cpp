@@ -730,6 +730,7 @@ namespace emscripten {
 // in our function type signatures. (this gives an error message like "Cannot call foo due to unbound
 // types Pi, Pf").  But, we can just pretend they are numbers and cast them to be pointers and
 // the compiler is happy.
+#ifdef JIMB_BIND
 EMSCRIPTEN_BINDINGS(Skia) {
 #ifdef SK_GL
     function("currentContext", &emscripten_webgl_get_current_context);
@@ -1926,3 +1927,4 @@ EMSCRIPTEN_BINDINGS(Skia) {
     constant("SaveLayerF16ColorType",     (int)SkCanvas::SaveLayerFlagsSet::kF16ColorType);
 
 }
+#endif

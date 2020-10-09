@@ -189,6 +189,7 @@ private:
 
 } // anonymous ns
 #endif // SK_INCLUDE_MANAGED_SKOTTIE
+#ifdef JIMB_BIND
 
 EMSCRIPTEN_BINDINGS(Skottie) {
     // Animation things (may eventually go in own library)
@@ -279,3 +280,4 @@ EMSCRIPTEN_BINDINGS(Skottie) {
     constant("managed_skottie", true);
 #endif // SK_INCLUDE_MANAGED_SKOTTIE
 }
+#endif

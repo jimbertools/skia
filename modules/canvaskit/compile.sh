@@ -334,7 +334,7 @@ echo "Generating final wasm"
 
 # Disable '-s STRICT=1' outside of Linux until
 # https://github.com/emscripten-core/emscripten/issues/12118 is resovled.
-STRICTNESS="-s STRICT=1"
+STRICTNESS="-s STRICT=0"
 if [[ `uname` != "Linux" ]]; then
   echo "Disabling '-s STRICT=1'. See: https://github.com/emscripten-core/emscripten/issues/12118"
   STRICTNESS=""
@@ -343,7 +343,7 @@ fi
 # Emscripten prefers that the .a files go last in order, otherwise, it
 # may drop symbols that it incorrectly thinks aren't used. One day,
 # Emscripten will use LLD, which may relax this requirement.
-EMCC_DEBUG=1 ${EMCXX} \
+EMCC_DEBUG=0 ${EMCXX} \
     $RELEASE_CONF \
     -I. \
     -Ithird_party/icu \
@@ -396,4 +396,5 @@ EMCC_DEBUG=1 ${EMCXX} \
     -s WARN_UNALIGNED=1 \
     -s WASM=1 \
     $STRICTNESS \
-    -o $BUILD_DIR/canvaskit.js
+    -r \
+    -o $BUILD_DIR/canvaskit.o

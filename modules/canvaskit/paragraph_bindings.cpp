@@ -160,6 +160,7 @@ Float32Array GetRectsForRange(para::ParagraphImpl& self, unsigned start, unsigne
     // into a Float32Array for us.
     return Float32Array(typed_memory_view(boxes.size()*5, fPtr));
 }
+#ifdef JIMB_BIND
 
 EMSCRIPTEN_BINDINGS(Paragraph) {
 
@@ -332,3 +333,4 @@ EMSCRIPTEN_BINDINGS(Paragraph) {
     constant("OverlineDecoration", int(para::TextDecoration::kOverline));
     constant("LineThroughDecoration", int(para::TextDecoration::kLineThrough));
 }
+#endif

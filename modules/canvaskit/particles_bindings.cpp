@@ -91,6 +91,7 @@ SimpleUniform fromUniform(SkSL::ByteCode::Uniform u) {
     return su;
 }
 
+#ifdef JIMB_BIND
 EMSCRIPTEN_BINDINGS(Particles) {
     class_<SkParticleEffect>("SkParticleEffect")
         .smart_ptr<sk_sp<SkParticleEffect>>("sk_sp<SkParticleEffect>")
@@ -208,3 +209,4 @@ EMSCRIPTEN_BINDINGS(Particles) {
     constant("particles", true);
 
 }
+#endif
