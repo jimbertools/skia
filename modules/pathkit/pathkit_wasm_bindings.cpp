@@ -466,6 +466,7 @@ float SkBits2FloatUnsigned(uint32_t floatAsBits) {
 // For example, see _transform
 // Additionally, we are perfectly happy to handle default arguments and function
 // overloads in the JS glue code (see chaining.js::addPath() for an example).
+#ifdef JIMB_BIND
 EMSCRIPTEN_BINDINGS(skia) {
     class_<SkPath>("SkPath")
         .constructor<>()
@@ -627,3 +628,4 @@ EMSCRIPTEN_BINDINGS(skia) {
     // Test Utils
     function("SkBits2FloatUnsigned", &SkBits2FloatUnsigned);
 }
+#endif

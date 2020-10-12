@@ -115,7 +115,7 @@ if [[ $@ == *viewer* ]]; then
   VIEWER_LIB="$BUILD_DIR/libviewer_wasm.a"
   IS_OFFICIAL_BUILD="false"
 fi
-
+ 
 MANAGED_SKOTTIE_BINDINGS="\
   -DSK_INCLUDE_MANAGED_SKOTTIE=1 \
   modules/skottie/utils/SkottieUtils.cpp"
@@ -343,7 +343,7 @@ fi
 # Emscripten prefers that the .a files go last in order, otherwise, it
 # may drop symbols that it incorrectly thinks aren't used. One day,
 # Emscripten will use LLD, which may relax this requirement.
-EMCC_DEBUG=0 ${EMCXX} \
+EMCC_DEBUG=1 ${EMCXX} \
     $RELEASE_CONF \
     -I. \
     -Ithird_party/icu \

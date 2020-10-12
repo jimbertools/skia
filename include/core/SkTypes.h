@@ -242,6 +242,7 @@
 
 #if !defined(SK_SUPPORT_GPU)
 #  define SK_SUPPORT_GPU 1
+#  define SK_GL 1
 #endif
 
 #if !SK_SUPPORT_GPU

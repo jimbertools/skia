@@ -487,6 +487,8 @@ sk_sp<SkSurface> MakeRenderTarget(sk_sp<GrContext> grContext, SimpleImageInfo si
 #endif
 
 using namespace emscripten;
+#ifdef JIMB_BIND
+
 EMSCRIPTEN_BINDINGS(my_module) {
 
   // The main class that the JavaScript in index.html uses
@@ -580,3 +582,4 @@ EMSCRIPTEN_BINDINGS(my_module) {
     constant("gpu", true);
   #endif
 }
+#endif

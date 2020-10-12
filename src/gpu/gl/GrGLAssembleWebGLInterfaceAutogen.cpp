@@ -18,7 +18,6 @@ sk_sp<const GrGLInterface> GrGLMakeAssembledWebGLInterface(void *ctx, GrGLGetPro
     return nullptr;
 }
 #else
-
 // Located https://github.com/emscripten-core/emscripten/tree/7ba7700902c46734987585409502f3c63beb650f/system/include/webgl
 #include "webgl/webgl1.h"
 #include "webgl/webgl1_ext.h"

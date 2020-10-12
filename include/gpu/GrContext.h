@@ -50,7 +50,6 @@ class SkTraceMemoryDump;
 class SK_API GrContext : public GrRecordingContext {
 public:
 #ifndef SK_DISABLE_LEGACY_CONTEXT_FACTORIES
-
 #ifdef SK_GL
     /**
      * Creates a GrContext for a backend context. If no GrGLInterface is provided then the result of
