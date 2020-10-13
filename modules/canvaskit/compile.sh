@@ -343,7 +343,7 @@ fi
 # Emscripten prefers that the .a files go last in order, otherwise, it
 # may drop symbols that it incorrectly thinks aren't used. One day,
 # Emscripten will use LLD, which may relax this requirement.
-EMCC_DEBUG=1 ${EMCXX} \
+EMCC_DEBUG=0 ${EMCXX} \
     $RELEASE_CONF \
     -I. \
     -Ithird_party/icu \
